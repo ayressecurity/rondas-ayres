@@ -55,6 +55,10 @@
                     {{ user.get_username }}
                     {% if user.email %}<small>{{ user.email }}</small>{% endif %}
                 </span>
+                {% if portal_url %}
+                    {# Solo navega al portal; NO cierra sesion. #}
+                    <a class="btn btn-secundario" href="{{ portal_url }}">Volver al portal</a>
+                {% endif %}
                 <form method="post" action="/oidc/logout/">
                     {% csrf_token %}
                     <button type="submit" class="btn btn-secundario">Cerrar sesión</button>

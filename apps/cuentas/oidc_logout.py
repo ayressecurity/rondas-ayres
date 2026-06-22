@@ -11,8 +11,10 @@ from django.conf import settings
 
 def keycloak_logout(request):
     id_token = request.session.get("oidc_id_token")
+    # Tras el logout, volver al PORTAL si esta configurado; si no, a Rondas.
+    destino = settings.PORTAL_URL or request.build_absolute_uri(settings.LOGOUT_REDIRECT_URL)
     params = {
-        "post_logout_redirect_uri": request.build_absolute_uri(settings.LOGOUT_REDIRECT_URL),
+        "post_logout_redirect_uri": destino,
         "client_id": settings.OIDC_RP_CLIENT_ID,
     }
     if id_token:

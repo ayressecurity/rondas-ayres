@@ -115,6 +115,8 @@ OIDC_STORE_ID_TOKEN = True
 LOGIN_URL = "/oidc/authenticate/"
 LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/"
+# Portal (Servidor 2): destino tras cerrar sesion. Vacio = volver a Rondas.
+PORTAL_URL = env("PORTAL_URL", default="")
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

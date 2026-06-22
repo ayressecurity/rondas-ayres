@@ -21,12 +21,13 @@ def keycloak(request):
 
 
 def contexto(request):
-    """Expone el contexto seleccionado (cliente + instalacion) a las plantillas."""
+    """Contexto seleccionado (cliente + instalacion) + enlace al portal."""
     return {
         "cliente_id": request.session.get("cliente_id"),
         "cliente_nombre": request.session.get("cliente_nombre"),
         "instalacion_id": request.session.get("instalacion_id"),
         "instalacion_nombre": request.session.get("instalacion_nombre"),
+        "portal_url": settings.PORTAL_URL,
     }
 
 
