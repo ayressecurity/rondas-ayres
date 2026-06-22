@@ -1,0 +1,469 @@
+/* =========================================================================
+   Rondas · Ayres Security — estilos base del dashboard.
+   Identidad de marca (manual sección 13): rojo + blanco, #333 estructura.
+   ========================================================================= */
+
+:root {
+    --rojo: #CC3333;
+    --rojo-hover: #B32D2D;
+    --oscuro: #333333;
+    --blanco: #FFFFFF;
+    --gris-borde: #E0E0E0;
+    --gris-fondo: #F5F5F5;
+
+    --sidebar-ancho: 240px;
+    --navbar-alto: 60px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+}
+
+body {
+    font-family: "Exo", Arial, sans-serif;
+    color: var(--oscuro);
+    background: var(--gris-fondo);
+    line-height: 1.5;
+}
+
+a { color: var(--rojo); text-decoration: none; }
+a:hover { color: var(--rojo-hover); }
+
+/* ---------- Navbar superior ---------- */
+.navbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--navbar-alto);
+    background: var(--oscuro);
+    color: var(--blanco);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    gap: 12px;
+    z-index: 50;
+}
+
+.navbar-izq {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0; /* permite truncar el wordmark si falta espacio */
+}
+
+/* Botón hamburguesa: oculto en escritorio, visible en móvil/tablet. */
+.menu-toggle {
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    width: 40px;
+    height: 40px;
+    padding: 9px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    flex: 0 0 auto;
+}
+.menu-toggle span {
+    display: block;
+    height: 2px;
+    width: 100%;
+    background: var(--blanco);
+    border-radius: 2px;
+    transition: transform 0.25s ease, opacity 0.2s ease;
+}
+/* Animación a "X" cuando el menú está abierto. */
+body.menu-abierto .menu-toggle span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+body.menu-abierto .menu-toggle span:nth-child(2) { opacity: 0; }
+body.menu-abierto .menu-toggle span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+/* Wordmark on-brand (placeholder del logo). "AYRES" en rojo, "SECURITY" claro. */
+.navbar-marca {
+    font-weight: 700;
+    font-size: 1.15rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.navbar-marca .marca-ayres { color: var(--rojo); }
+.navbar-marca .marca-security { color: var(--blanco); font-weight: 400; }
+
+/* Contenedor de los chips de contexto (Cliente / Instalación). */
+.navbar-contexto {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    overflow: hidden;
+}
+
+/* Chip de contexto seleccionado en el navbar. */
+.navbar-instalacion {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 20px;
+    padding: 5px 12px;
+    font-size: 0.85rem;
+}
+.navbar-instalacion .ni-label { color: rgba(255, 255, 255, 0.6); }
+.navbar-instalacion .ni-nombre {
+    color: var(--blanco);
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 38vw;
+}
+.navbar-instalacion .ni-cambiar {
+    color: var(--rojo);
+    font-weight: 600;
+    white-space: nowrap;
+    padding-left: 6px;
+    border-left: 1px solid rgba(255, 255, 255, 0.18);
+}
+.navbar-instalacion .ni-cambiar:hover { color: var(--rojo-hover); }
+
+/* Aviso de selección activa en la lista de instalaciones. */
+.aviso-seleccion {
+    background: #FBEDED;
+    border: 1px solid var(--rojo);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 18px;
+}
+
+/* Contexto de instalación arriba de cada módulo. */
+.contexto-instalacion {
+    color: #666;
+    margin-top: -4px;
+}
+
+.badge-activa {
+    display: inline-block;
+    background: var(--rojo);
+    color: var(--blanco);
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 5px 12px;
+    border-radius: 14px;
+}
+
+/* ---------- Tabla "Objetivos" (lista de instalaciones) ---------- */
+.tabla-scroll {
+    overflow-x: auto;            /* scroll horizontal en pantallas chicas */
+    background: var(--blanco);
+    border: 1px solid var(--gris-borde);
+    border-radius: 8px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.tabla-objetivos {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+    min-width: 760px;            /* evita aplastar columnas; activa el scroll */
+}
+.tabla-objetivos thead th {
+    background: var(--oscuro);
+    color: var(--blanco);
+    text-align: left;
+    font-weight: 600;
+    padding: 12px 14px;
+    white-space: nowrap;
+}
+.tabla-objetivos tbody td {
+    padding: 11px 14px;
+    border-top: 1px solid var(--gris-borde);
+    color: var(--oscuro);
+}
+.tabla-objetivos tbody tr:nth-child(even) { background: #FAFAFA; }
+
+/* Filas seleccionables: clic = elegir instalación. */
+.fila-seleccionable { cursor: pointer; }
+.fila-seleccionable:hover td { background: var(--gris-fondo); }
+.fila-seleccionable:focus-visible { outline: 2px solid var(--rojo); outline-offset: -2px; }
+
+/* Fila ACTIVA: rojo de marca (#CC3333) — fondo rojo claro + texto/borde rojo. */
+.tabla-objetivos tbody tr.fila-activa td {
+    background: #FBEDED;
+    color: var(--rojo);
+    font-weight: 600;
+    border-top-color: var(--rojo);
+}
+.tabla-objetivos tbody tr.fila-activa td:first-child { box-shadow: inset 3px 0 0 var(--rojo); }
+
+/* Badge de estado del esquema (estado_av: activo | inactivo). */
+.estado {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 3px 9px;
+    border-radius: 12px;
+}
+.estado-activo { background: #E6F4EA; color: #1E7E34; }
+.estado-inactivo { background: #F0F0F0; color: #777; }
+
+.col-accion { white-space: nowrap; }
+.col-accion form { margin: 0; }
+.btn-sm { padding: 6px 12px; font-size: 0.82rem; }
+
+/* En móvil, cada fila se apila como tarjeta (etiqueta : valor). */
+@media (max-width: 720px) {
+    .tabla-objetivos { min-width: 0; }
+    .tabla-objetivos thead { display: none; }
+    .tabla-objetivos tbody tr {
+        display: block;
+        border-top: 1px solid var(--gris-borde);
+        padding: 6px 0;
+    }
+    .tabla-objetivos tbody td {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        border: none;
+        padding: 7px 14px;
+    }
+    .tabla-objetivos tbody td::before {
+        content: attr(data-col);
+        font-weight: 600;
+        color: #888;
+    }
+    .tabla-objetivos tbody tr.fila-activa td:first-child { box-shadow: none; }
+    .tabla-objetivos tbody tr.fila-activa { box-shadow: inset 3px 0 0 var(--rojo); }
+}
+
+/* Capa oscura tras la sidebar off-canvas (solo móvil). */
+.overlay-sidebar {
+    position: fixed;
+    inset: var(--navbar-alto) 0 0 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 40;
+    border: 0;
+}
+.overlay-sidebar[hidden] { display: none; }
+
+.navbar-sesion {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+.navbar-usuario { font-size: 0.9rem; text-align: right; }
+.navbar-usuario small { display: block; opacity: 0.7; font-size: 0.75rem; }
+
+/* ---------- Layout: sidebar fija + contenido ---------- */
+.layout {
+    display: flex;
+    padding-top: var(--navbar-alto);
+    min-height: 100vh;
+}
+
+.sidebar {
+    position: fixed;
+    top: var(--navbar-alto);
+    bottom: 0;
+    left: 0;
+    width: var(--sidebar-ancho);
+    background: var(--blanco);
+    border-right: 1px solid var(--gris-borde);
+    overflow-y: auto;
+    padding: 16px 0;
+    z-index: 45; /* sobre el overlay (40), bajo el navbar (50) */
+    transition: transform 0.25s ease;
+}
+
+.sidebar-menu { list-style: none; margin: 0; padding: 0; }
+.sidebar-menu li { margin: 0; }
+
+.sidebar-menu a {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 20px;
+    color: var(--oscuro);
+    border-left: 3px solid transparent;
+    font-size: 0.95rem;
+}
+.sidebar-menu a:hover {
+    background: var(--gris-fondo);
+    color: var(--oscuro);
+}
+
+/* Estado ACTIVO: acento rojo (manual: ítem activo en rojo corporativo). */
+.sidebar-menu a.activo {
+    border-left-color: var(--rojo);
+    color: var(--rojo);
+    background: #FBEDED;
+    font-weight: 600;
+}
+
+/* Inicial del módulo en un cuadrito (sin librerías de íconos). */
+.menu-inicial {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    background: var(--gris-fondo);
+    color: var(--oscuro);
+    font-size: 0.75rem;
+    font-weight: 700;
+    flex: 0 0 auto;
+}
+.sidebar-menu a.activo .menu-inicial {
+    background: var(--rojo);
+    color: var(--blanco);
+}
+
+/* ---------- Área de contenido ---------- */
+.contenido {
+    flex: 1;
+    margin-left: var(--sidebar-ancho);
+    padding: 28px 32px;
+    width: 100%;
+}
+.contenido h1 {
+    margin-top: 0;
+    font-size: 1.6rem;
+    border-bottom: 3px solid var(--rojo);
+    padding-bottom: 10px;
+    display: inline-block;
+}
+
+/* ---------- Tarjetas ---------- */
+.tarjeta {
+    background: var(--blanco);
+    border: 1px solid var(--gris-borde);
+    border-radius: 8px;
+    padding: 20px 22px;
+    margin-bottom: 18px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.tarjeta h2 {
+    margin-top: 0;
+    font-size: 1.1rem;
+    color: var(--oscuro);
+}
+.tarjeta h2 small { color: #888; font-weight: 400; font-size: 0.8rem; }
+.tarjeta ul { margin: 0; padding-left: 18px; }
+
+.grid-tarjetas {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 18px;
+}
+
+/* Aviso "en construcción" de los módulos placeholder. */
+.en-construccion {
+    background: var(--blanco);
+    border: 1px dashed var(--gris-borde);
+    border-radius: 8px;
+    padding: 40px;
+    text-align: center;
+    color: #777;
+}
+.en-construccion .etiqueta {
+    display: inline-block;
+    background: var(--rojo);
+    color: var(--blanco);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    border-radius: 12px;
+    margin-bottom: 14px;
+}
+
+/* ---------- Botones ---------- */
+.btn { display: inline-block; padding: 9px 16px; border-radius: 6px; font-size: 0.9rem; cursor: pointer; border: 1px solid transparent; }
+.btn-primario {
+    background: var(--rojo);
+    color: var(--blanco);
+    border-color: var(--rojo);
+}
+.btn-primario:hover { background: var(--rojo-hover); border-color: var(--rojo-hover); color: var(--blanco); }
+.btn-secundario {
+    background: var(--blanco);
+    color: var(--oscuro);
+    border-color: var(--gris-borde);
+}
+.btn-secundario:hover { background: var(--gris-fondo); color: var(--oscuro); }
+
+/* Botón de logout en el navbar (form inline). */
+.navbar-sesion form { margin: 0; }
+
+/* =========================================================================
+   RESPONSIVE
+   Escritorio (> 1024px): sidebar fija a la izquierda, contenido a su derecha.
+   Tablet/móvil (<= 1024px): sidebar off-canvas que se abre con la hamburguesa.
+   ========================================================================= */
+
+/* Pantallas anchas: damos un poco más de aire al contenido. */
+@media (min-width: 1400px) {
+    .contenido { padding: 32px 48px; }
+}
+
+/* ---------- Tablet y móvil: sidebar off-canvas ---------- */
+@media (max-width: 1024px) {
+    .menu-toggle { display: flex; }
+
+    .contenido {
+        margin-left: 0;       /* la sidebar ya no ocupa espacio fijo */
+        width: 100%;
+    }
+
+    .sidebar {
+        width: 270px;
+        max-width: 82vw;
+        transform: translateX(-100%);   /* oculta fuera de pantalla */
+        box-shadow: 2px 0 12px rgba(0, 0, 0, 0.18);
+    }
+    body.menu-abierto .sidebar { transform: translateX(0); }   /* se desliza al abrir */
+
+    /* El overlay solo tiene sentido en este modo. */
+    body:not(.menu-abierto) .overlay-sidebar { display: none; }
+}
+
+/* ---------- Móvil: ajustes de navbar y contenido ---------- */
+@media (max-width: 640px) {
+    .navbar { padding: 0 12px; gap: 8px; }
+    .navbar-marca { font-size: 1rem; letter-spacing: 1px; }
+    .navbar-sesion { gap: 8px; }
+    .navbar-usuario small { display: none; }   /* el email ocuparía demasiado */
+    .navbar-contexto { gap: 6px; }
+    .navbar-instalacion { padding: 4px 10px; gap: 6px; }
+    .navbar-instalacion .ni-label { display: none; }   /* solo nombre + Cambiar */
+    .navbar-instalacion .ni-nombre { max-width: 22vw; }
+    .contenido { padding: 18px 16px; }
+    .contenido h1 { font-size: 1.35rem; }
+    .tarjeta { padding: 16px 16px; }
+    .grid-tarjetas { grid-template-columns: 1fr; }   /* tarjetas a una columna */
+    .en-construccion { padding: 28px 16px; }
+}
+
+/* ---------- Móvil pequeño ---------- */
+@media (max-width: 400px) {
+    .navbar-usuario { display: none; }                 /* dejamos solo el botón salir */
+    .navbar-marca .marca-security { display: none; }   /* "Ayres" basta */
+    .btn { padding: 8px 12px; font-size: 0.85rem; }
+}
+
+/* Respeta a quien prefiere menos animación. */
+@media (prefers-reduced-motion: reduce) {
+    .sidebar, .menu-toggle span { transition: none; }
+}

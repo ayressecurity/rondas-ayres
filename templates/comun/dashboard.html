@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block titulo %}Dashboard — Rondas{% endblock %}
+
+{% block contenido %}
+<h1>Dashboard</h1>
+<p>Sesión iniciada vía SSO de Keycloak. Lectura de permisos del token:</p>
+
+<div class="grid-tarjetas">
+    <section class="tarjeta">
+        <h2>Identidad</h2>
+        <ul>
+            <li><strong>Usuario:</strong> {{ user.get_username }}</li>
+            <li><strong>Email:</strong> {{ user.email|default:"—" }}</li>
+            <li><strong>keycloak_id (sub):</strong> {{ user.keycloak_id|default:"—" }}</li>
+            <li><strong>super_admin:</strong> {{ es_super_admin|yesno:"sí,no" }}</li>
+        </ul>
+    </section>
+
+    <section class="tarjeta">
+        <h2>Groups <small>(qué se ve)</small></h2>
+        {% if kc_grupos %}
+            <ul>
+                {% for grupo in kc_grupos %}<li>{{ grupo }}</li>{% endfor %}
+            </ul>
+        {% else %}
+            <p>Sin groups en el token.</p>
+        {% endif %}
+    </section>
+
+    <section class="tarjeta">
+        <h2>Roles <small>(qué se puede hacer)</small></h2>
+        {% if kc_roles %}
+            <ul>
+                {% for rol in kc_roles %}<li>{{ rol }}</li>{% endfor %}
+            </ul>
+        {% else %}
+            <p>Sin roles en el token.</p>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}

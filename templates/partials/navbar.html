@@ -1,0 +1,16 @@
+{# Barra superior. Muestra el usuario y el boton de sesion (SSO Keycloak). #}
+<nav class="navbar">
+    <span class="navbar-marca">Rondas · Ayres Security</span>
+
+    <div class="navbar-sesion">
+        {% if user.is_authenticated %}
+            <span class="navbar-usuario">{{ user.get_username }}</span>
+            <form method="post" action="/oidc/logout/">
+                {% csrf_token %}
+                <button type="submit">Cerrar sesión</button>
+            </form>
+        {% else %}
+            <a class="btn-login" href="/oidc/authenticate/">Iniciar sesión</a>
+        {% endif %}
+    </div>
+</nav>

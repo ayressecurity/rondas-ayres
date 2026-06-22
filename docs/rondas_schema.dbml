@@ -1,0 +1,315 @@
+// Esquema BBDD Rondas v0.9 — pegar en https://dbdiagram.io
+// (*) = referencia lógica (espejo Ayres o Keycloak): NO es FK.
+// FK reales solo entre tablas propias de Rondas.
+// cliente/instalacion = espejo de Ayres (sin FK). vehiculo sin relaciones. persona/dispositivo solo PK.
+
+Enum estado_av {
+  activo
+  inactivo
+}
+
+Enum categoria_evento {
+  sesion
+  ronda
+  novedad
+  error
+}
+
+Enum estado_generico {
+  activa
+  inactiva
+}
+
+Enum repite_recurrencia {
+  diaria
+  semanal
+  mensual
+}
+
+Enum destino_notificacion {
+  guardia
+  grupo
+  todos
+}
+
+Enum estado_evento {
+  ok
+  alerta
+  error
+}
+
+Enum tipo_media {
+  foto
+  audio
+  video
+}
+
+Enum desplazamiento_vehiculo {
+  entrada
+  salida
+}
+
+Enum tipo_vehiculo {
+  motocicleta
+  furgon
+  auto
+  station_wagon
+  camioneta
+  mini_bus
+}
+
+Enum turno_vehiculo {
+  primer_turno
+  segundo_turno
+  tercer_turno
+  intermedio
+  turno_largo
+  turno_especial
+}
+
+// ===================== ESPEJO DE AYRES (sin FK) =====================
+
+Table cliente {
+  id bigint [pk, note: '= id de Ayres']
+  razon_social varchar(255) [not null]
+  codigo_cc varchar(20)
+  rut varchar(255) [not null]
+  tipo varchar(255) [not null, default: 'privado']
+  id_licitacion varchar(255)
+  valor_mensual_neto decimal(12,2)
+  moneda varchar(10) [not null, default: 'CLP']
+  cantidad_admin_contrato int [not null, default: 1]
+  direccion varchar(255)
+  email_contacto varchar(255)
+  telefono_contacto varchar(255)
+  nombre_contacto varchar(255)
+  fecha_inicio_contrato datetime
+  fecha_fin_contrato datetime
+  renovacion_automatica tinyint [not null, default: 0]
+  reajuste_ipc tinyint [not null, default: 0]
+  reajuste_imm tinyint [not null, default: 0]
+  porcentaje_reajuste_ipc decimal(5,2)
+  porcentaje_variacion_imm decimal(5,2)
+  periodicidad_reajuste int
+  estado estado_av [not null, default: 'activo']
+  created_at timestamp
+  updated_at timestamp
+  deleted_at timestamp
+  indexes {
+    rut
+  }
+  Note: 'ESPEJO de Ayres (se omite user_id). Sin FK.'
+}
+
+Table instalacion {
+  id bigint [pk, note: '= id de Ayres']
+  codigo varchar(20) [not null, unique, note: 'propio de Rondas, NO viene de Ayres (ej. AYR-0001)']
+  cliente_id bigint [not null, note: '(*) espejo, indice, SIN FK']
+  nombre varchar(255) [not null]
+  categoria varchar(20) [not null, default: 'media']
+  direccion varchar(255)
+  region varchar(255)
+  comuna varchar(255)
+  latitud decimal(10,8)
+  longitud decimal(11,8)
+  dotacion_requerida int [not null, default: 1]
+  cantidad_guardias int [not null, default: 1]
+  cantidad_supervisores int [not null, default: 0]
+  certificaciones_requeridas json
+  edad_minima_hombres int
+  edad_maxima_hombres int
+  edad_minima_mujeres int
+  edad_maxima_mujeres int
+  requisito_idioma varchar(255)
+  experiencia_requerida text
+  capacitacion_requerida text
+  habilidades_especificas text
+  permite_ley_inclusion tinyint [not null, default: 0]
+  valor_turno_extra decimal(10,2)
+  valor_jornada_ordinaria decimal(10,2)
+  estado estado_av [not null, default: 'activo']
+  observaciones text
+  created_at timestamp
+  updated_at timestamp
+  deleted_at timestamp
+  indexes {
+    cliente_id
+    codigo [unique]
+  }
+  Note: 'ESPEJO de Ayres + campo propio codigo. Sin FK.'
+}
+
+// ===================== CATALOGO =====================
+
+Table tipo_evento {
+  id smallint [pk, increment]
+  codigo varchar(20) [not null, unique]
+  nombre varchar(60) [not null]
+  categoria categoria_evento [not null]
+  activo tinyint [not null, default: 1]
+}
+
+// ===================== IDENTIDAD =====================
+
+Table usuario {
+  id bigint [pk, increment]
+  username varchar(150) [not null, unique]
+  email varchar(254)
+  keycloak_id char(36) [unique, note: 'sub del token (login unico SSO)']
+  zona varchar(80)
+  turno varchar(20)
+  is_active tinyint [not null, default: 1]
+  is_staff tinyint [not null, default: 0]
+  date_joined datetime [not null]
+}
+
+// ===================== CONFIGURACION =====================
+
+Table punto_control {
+  id bigint [pk, increment]
+  instalacion_id bigint [not null, note: '(*) espejo, SIN FK']
+  tipo varchar(40)
+  nombre varchar(120) [not null]
+  observacion text
+  lat decimal(10,8) [not null]
+  lng decimal(11,8) [not null]
+  tolerancia_mts smallint [not null, default: 30]
+  validar_posicion tinyint [not null, default: 1, note: '0 = no validar arribo']
+  foto_path varchar(255)
+  qr_token char(36) [not null, unique]
+  activo tinyint [not null, default: 1]
+  creado_en datetime [not null]
+  indexes {
+    instalacion_id
+  }
+}
+
+Table ronda {
+  id bigint [pk, increment]
+  cliente_id bigint [not null, note: '(*) espejo, SIN FK']
+  instalacion_id bigint [not null, note: '(*) espejo, SIN FK']
+  nombre varchar(120) [not null]
+  fecha_inicio date [not null]
+  estado estado_generico [not null, default: 'activa']
+  creado_en datetime [not null]
+  indexes {
+    instalacion_id
+  }
+}
+
+Table ronda_secuencia {
+  id bigint [pk, increment]
+  ronda_id bigint [not null]
+  punto_control_id bigint [not null]
+  orden smallint [not null]
+  indexes {
+    (ronda_id, punto_control_id) [unique]
+  }
+}
+
+Table ronda_guardia {
+  id bigint [pk, increment]
+  ronda_id bigint [not null]
+  guardia_keycloak_id char(36) [not null, note: '(*) sub Keycloak']
+  indexes {
+    (ronda_id, guardia_keycloak_id) [unique]
+  }
+}
+
+Table programacion {
+  id bigint [pk, increment]
+  ronda_id bigint [not null]
+  repite repite_recurrencia [not null]
+  activo tinyint [not null, default: 1]
+}
+
+Table programacion_horario {
+  id bigint [pk, increment]
+  programacion_id bigint [not null]
+  hora tinyint [not null, note: '0-23']
+  minuto tinyint [not null, note: '0-59']
+}
+
+Table notificacion {
+  id bigint [pk, increment]
+  ronda_id bigint [not null]
+  destino_tipo destino_notificacion [not null]
+  destino_ref varchar(80) [note: 'sub guardia / id grupo; null si todos']
+  anticipacion_min smallint [not null]
+  mensaje varchar(255)
+  estado estado_generico [not null, default: 'activa']
+}
+
+// ===================== EJECUCION =====================
+
+Table libro_novedades {
+  id bigint [pk, increment]
+  instalacion_id bigint [not null, note: '(*) espejo, SIN FK; INDEX']
+  ronda_id bigint
+  punto_control_id bigint
+  guardia_keycloak_id char(36) [not null, note: '(*) sub Keycloak']
+  dispositivo_id bigint [note: 'FK pendiente']
+  tipo_evento_id smallint [not null]
+  timestamp_evento datetime [not null]
+  timestamp_servidor datetime [not null]
+  lat decimal(10,8)
+  lng decimal(11,8)
+  distancia_metros decimal(7,2)
+  dentro_geocerca tinyint
+  estado estado_evento [not null, default: 'ok']
+  texto text
+  indexes {
+    (instalacion_id, timestamp_evento)
+    tipo_evento_id
+    guardia_keycloak_id
+  }
+}
+
+Table libro_novedades_media {
+  id bigint [pk, increment]
+  libro_novedades_id bigint [not null]
+  tipo tipo_media [not null]
+  path varchar(255) [not null]
+  creado_en datetime [not null]
+}
+
+// ===================== CONTROL VEHICULAR (sin FK) =====================
+
+Table vehiculo {
+  id bigint [pk, increment]
+  desplazamiento desplazamiento_vehiculo [not null]
+  recinto varchar(120) [not null]
+  ppu varchar(30) [not null]
+  kilometraje int
+  tipo_vehiculo tipo_vehiculo [not null]
+  nombre_conductor varchar(160) [not null]
+  codigo_conductor varchar(50)
+  turno turno_vehiculo [not null]
+  registrado_keycloak_id char(36) [note: '(*) quien registro']
+  creado_en datetime [not null]
+}
+
+// ===================== PENDIENTES (solo PK) =====================
+
+Table persona {
+  id bigint [pk, increment]
+  Note: 'POR DETALLAR. Aparte de usuario y de guardia. Sin relaciones.'
+}
+
+Table dispositivo {
+  id bigint [pk, increment]
+  Note: 'POR DETALLAR (tabla y modulo). Solo PK por ahora.'
+}
+
+// ===================== FK REALES (solo tablas propias de Rondas) =====================
+
+Ref: ronda_secuencia.ronda_id > ronda.id
+Ref: ronda_secuencia.punto_control_id > punto_control.id
+Ref: ronda_guardia.ronda_id > ronda.id
+Ref: programacion.ronda_id > ronda.id
+Ref: programacion_horario.programacion_id > programacion.id
+Ref: notificacion.ronda_id > ronda.id
+Ref: libro_novedades.ronda_id > ronda.id
+Ref: libro_novedades.punto_control_id > punto_control.id
+Ref: libro_novedades.tipo_evento_id > tipo_evento.id
+Ref: libro_novedades_media.libro_novedades_id > libro_novedades.id

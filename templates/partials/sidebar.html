@@ -1,0 +1,17 @@
+{% comment %}
+Menu lateral dinamico. Itera `menu` (apps/comun/menu.py via context_processor):
+solo trae los modulos visibles para el usuario y marca el activo.
+Gatear por rol mas adelante = editar SOLO menu.py.
+{% endcomment %}
+<aside class="sidebar" id="sidebar">
+    <ul class="sidebar-menu">
+        {% for item in menu %}
+            <li>
+                <a href="{% url item.url_name %}" class="{% if item.activo %}activo{% endif %}">
+                    <span class="menu-inicial">{{ item.label|first }}</span>
+                    <span>{{ item.label }}</span>
+                </a>
+            </li>
+        {% endfor %}
+    </ul>
+</aside>

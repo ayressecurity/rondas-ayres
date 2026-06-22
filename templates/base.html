@@ -1,0 +1,81 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block titulo %}Rondas — Ayres Security{% endblock %}</title>
+
+    {# Tipografia de marca: Exo (titulos), Arial como fallback. #}
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Exo:wght@400;600;700&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet" href="{% static 'css/dashboard.css' %}?v={{ STATIC_VERSION }}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="navbar-izq">
+            {% if user.is_authenticated %}
+                <button type="button" class="menu-toggle" id="menuToggle"
+                        aria-label="Abrir menú" aria-controls="sidebar" aria-expanded="false">
+                    <span></span><span></span><span></span>
+                </button>
+            {% endif %}
+            {% comment %}
+            Logo: aun sin archivo. Wordmark on-brand como placeholder.
+            Cuando exista el PNG, descomentar este <img> y quitar el wordmark:
+            <img src="{% static 'img/logo-ayres-blanco.png' %}" alt="Ayres Security" height="32">
+            {% endcomment %}
+            <a href="{% url 'comun:dashboard' %}" class="navbar-marca">
+                <span class="marca-ayres">Ayres</span>&nbsp;<span class="marca-security">Security</span>
+            </a>
+        </div>
+
+        {% if cliente_id %}
+            <div class="navbar-contexto">
+                <div class="navbar-instalacion">
+                    <span class="ni-label">Cliente:</span>
+                    <span class="ni-nombre">{{ cliente_nombre }}</span>
+                    <a class="ni-cambiar" href="{% url 'clientes:cambiar' %}">Cambiar</a>
+                </div>
+                {% if instalacion_id %}
+                    <div class="navbar-instalacion">
+                        <span class="ni-label">Instalación:</span>
+                        <span class="ni-nombre">{{ instalacion_nombre }}</span>
+                        <a class="ni-cambiar" href="{% url 'instalaciones:cambiar' %}">Cambiar</a>
+                    </div>
+                {% endif %}
+            </div>
+        {% endif %}
+
+        <div class="navbar-sesion">
+            {% if user.is_authenticated %}
+                <span class="navbar-usuario">
+                    {{ user.get_username }}
+                    {% if user.email %}<small>{{ user.email }}</small>{% endif %}
+                </span>
+                <form method="post" action="/oidc/logout/">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-secundario">Cerrar sesión</button>
+                </form>
+            {% else %}
+                <a class="btn btn-primario" href="/oidc/authenticate/">Iniciar sesión</a>
+            {% endif %}
+        </div>
+    </nav>
+
+    <div class="layout">
+        {% include "partials/sidebar.html" %}
+
+        {# Capa oscura tras la sidebar off-canvas en movil. #}
+        <div class="overlay-sidebar" id="overlaySidebar" hidden></div>
+
+        <main class="contenido">
+            {% block contenido %}{% endblock %}
+        </main>
+    </div>
+
+    <script src="{% static 'js/dashboard.js' %}?v={{ STATIC_VERSION }}"></script>
+</body>
+</html>

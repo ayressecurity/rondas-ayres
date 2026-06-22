@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block titulo %}Clientes — Rondas{% endblock %}
+
+{% block contenido %}
+<h1>Clientes</h1>
+<p>Selecciona un cliente (clic en la fila) para ver sus instalaciones.</p>
+
+{% if cliente_id %}
+    <div class="aviso-seleccion">
+        Cliente actual: <strong>{{ cliente_nombre }}</strong>.
+        <a href="{% url 'clientes:cambiar' %}">Cambiar cliente</a>
+    </div>
+{% endif %}
+
+<div class="tabla-scroll">
+    <table class="tabla-objetivos">
+        <thead>
+            <tr>
+                <th>Nombre</th>
+                <th>Estado</th>
+                <th>Comuna</th>
+                <th>Dirección</th>
+                <th>Teléfono</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for cli in clientes %}
+                <tr class="fila-objetivo{% if cliente_id == cli.id %} fila-activa{% else %} fila-seleccionable{% endif %}"
+                    {% if cliente_id != cli.id %}data-form="sel-cli-{{ cli.id }}" tabindex="0" role="button" aria-label="Seleccionar {{ cli.razon_social }}"{% endif %}>
+                    <td data-col="Nombre">{{ cli.razon_social }}</td>
+                    <td data-col="Estado">
+                        <span class="estado estado-{{ cli.estado }}">{{ cli.estado }}</span>
+                    </td>
+                    <td data-col="Comuna">{{ cli.comuna }}</td>
+                    <td data-col="Dirección">{{ cli.direccion }}</td>
+                    <td data-col="Teléfono">{{ cli.telefono_contacto }}</td>
+                </tr>
+            {% empty %}
+                <tr><td colspan="5">No hay clientes disponibles.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% comment %}
+Formularios de selección, fuera de la tabla. El clic en la fila los dispara
+por id vía dashboard.js.
+{% endcomment %}
+{% for cli in clientes %}
+    {% if cliente_id != cli.id %}
+        <form id="sel-cli-{{ cli.id }}" method="post" action="{% url 'clientes:seleccionar' cli.id %}" hidden>
+            {% csrf_token %}
+        </form>
+    {% endif %}
+{% endfor %}
+{% endblock %}
