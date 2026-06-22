@@ -28,8 +28,8 @@ def seleccionar(request, instalacion_id):
     ins = repositorio.obtener_instalacion(instalacion_id)
     if not ins:
         return redirect("instalaciones:index")
-    request.session["instalacion_id"] = ins["id"]
-    request.session["instalacion_nombre"] = ins["nombre"]
+    request.session["instalacion_id"] = ins.id
+    request.session["instalacion_nombre"] = ins.nombre
     return redirect("comun:dashboard")
 
 

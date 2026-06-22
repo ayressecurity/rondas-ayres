@@ -19,9 +19,9 @@
             <tr>
                 <th>Nombre</th>
                 <th>Estado</th>
-                <th>Comuna</th>
                 <th>Dirección</th>
                 <th>Teléfono</th>
+                <th>RUT</th>
             </tr>
         </thead>
         <tbody>
@@ -32,9 +32,9 @@
                     <td data-col="Estado">
                         <span class="estado estado-{{ cli.estado }}">{{ cli.estado }}</span>
                     </td>
-                    <td data-col="Comuna">{{ cli.comuna }}</td>
                     <td data-col="Dirección">{{ cli.direccion }}</td>
                     <td data-col="Teléfono">{{ cli.telefono_contacto }}</td>
+                    <td data-col="RUT">{{ cli.rut }}</td>
                 </tr>
             {% empty %}
                 <tr><td colspan="5">No hay clientes disponibles.</td></tr>

@@ -21,8 +21,8 @@ def seleccionar(request, cliente_id):
     cli = repositorio.obtener_cliente(cliente_id)
     if not cli:
         return redirect("clientes:index")
-    request.session["cliente_id"] = cli["id"]
-    request.session["cliente_nombre"] = cli["razon_social"]
+    request.session["cliente_id"] = cli.id
+    request.session["cliente_nombre"] = cli.razon_social
     # Cambiar de cliente invalida cualquier instalacion previa.
     request.session.pop("instalacion_id", None)
     request.session.pop("instalacion_nombre", None)

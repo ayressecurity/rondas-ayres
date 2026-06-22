@@ -26,7 +26,6 @@
                 <th>Estado</th>
                 <th>Comuna</th>
                 <th>Dirección</th>
-                <th>Teléfono</th>
             </tr>
         </thead>
         <tbody>
@@ -40,10 +39,9 @@
                     </td>
                     <td data-col="Comuna">{{ ins.comuna }}</td>
                     <td data-col="Dirección">{{ ins.direccion }}</td>
-                    <td data-col="Teléfono">{{ ins.telefono }}</td>
                 </tr>
             {% empty %}
-                <tr><td colspan="6">Este cliente no tiene instalaciones.</td></tr>
+                <tr><td colspan="5">Este cliente no tiene instalaciones.</td></tr>
             {% endfor %}
         </tbody>
     </table>

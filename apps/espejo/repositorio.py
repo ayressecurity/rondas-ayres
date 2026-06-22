@@ -1,42 +1,34 @@
 """
 Repositorio del espejo: ÚNICA capa de acceso a clientes/instalaciones.
 
-Las vistas SOLO llaman a estas funciones. Reemplazar simulado -> real = editar
-SOLO este archivo (cambiar datos_demo por consultas a los modelos Cliente /
-Instalacion de apps.espejo cuando Ayres360 vuelva). Las firmas no cambian.
+Lee de las tablas espejo REALES (modelos Cliente / Instalacion), pobladas por
+el sync desde Ayres360. Solo filas no borradas (deleted_at IS NULL). Las vistas
+SOLO llaman a estas funciones.
 
 Jerarquia: Cliente -> Instalacion (instalacion.cliente_id, logico SIN FK).
 """
-from apps.espejo import datos_demo
+from apps.espejo.models import Cliente, Instalacion
 
 
 # ---------- Clientes ----------
 def listar_clientes():
-    """Todos los clientes."""
-    # // TEMPORAL: mañana = list(Cliente.objects.all())
-    return list(datos_demo.CLIENTES_DEMO)
+    """Clientes no borrados, ordenados por razon social."""
+    return Cliente.objects.filter(deleted_at__isnull=True).order_by("razon_social")
 
 
 def obtener_cliente(cliente_id):
-    """Un cliente o None."""
-    # // TEMPORAL: mañana = Cliente.objects.filter(id=cliente_id).first()
-    for cli in datos_demo.CLIENTES_DEMO:
-        if cli["id"] == cliente_id:
-            return cli
-    return None
+    """Un cliente no borrado o None."""
+    return Cliente.objects.filter(id=cliente_id, deleted_at__isnull=True).first()
 
 
 # ---------- Instalaciones ----------
 def listar_instalaciones(cliente_id):
-    """Instalaciones de un cliente (filtradas por cliente_id)."""
-    # // TEMPORAL: mañana = list(Instalacion.objects.filter(cliente_id=cliente_id))
-    return [ins for ins in datos_demo.INSTALACIONES_DEMO if ins["cliente_id"] == cliente_id]
+    """Instalaciones no borradas de un cliente, ordenadas por codigo."""
+    return Instalacion.objects.filter(
+        cliente_id=cliente_id, deleted_at__isnull=True
+    ).order_by("codigo")
 
 
 def obtener_instalacion(instalacion_id):
-    """Una instalación o None."""
-    # // TEMPORAL: mañana = Instalacion.objects.filter(id=instalacion_id).first()
-    for ins in datos_demo.INSTALACIONES_DEMO:
-        if ins["id"] == instalacion_id:
-            return ins
-    return None
+    """Una instalación no borrada o None."""
+    return Instalacion.objects.filter(id=instalacion_id, deleted_at__isnull=True).first()
