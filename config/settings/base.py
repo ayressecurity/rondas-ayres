@@ -87,6 +87,15 @@ DATABASES = {"default": env.db("DATABASE_URL")}
 # Charset utf8mb4 (soporta emojis/acentos completos) en MySQL.
 DATABASES["default"]["OPTIONS"] = {"charset": "utf8mb4"}
 
+# Ayres360 (Servidor 3): MySQL externo SOLO LECTURA. Se usa unicamente via raw
+# SQL con connections["ayres"].cursor() para el sync del espejo. SIN router ni
+# modelos mapeados. NUNCA correr migrate sobre "ayres".
+DATABASES["ayres"] = env.db("AYRES_DATABASE_URL")
+DATABASES["ayres"]["OPTIONS"] = {"charset": "utf8mb4"}
+
+# Comunas a sincronizar desde Ayres (lista separada por comas). Hoy: Las Condes.
+SYNC_COMUNAS = env.list("SYNC_COMUNAS", default=["las condes"])
+
 # Modelo de usuario propio (debe estar ANTES de la primera migracion)
 AUTH_USER_MODEL = "cuentas.Usuario"
 
