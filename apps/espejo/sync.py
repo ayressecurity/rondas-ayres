@@ -50,22 +50,22 @@ def _norm(valor):
     return re.sub(r"\s+", " ", s).strip().lower()
 
 
-def _comuna_coincide(comuna, terminos):
-    """True si, para algun termino, TODAS sus palabras aparecen en la comuna."""
-    cn = _norm(comuna)
+def _coincide(texto, terminos):
+    """True si, para algun termino, TODAS sus palabras aparecen en el texto."""
+    tn = _norm(texto)
     for term in terminos:
         palabras = _norm(term).split()
-        if palabras and all(p in cn for p in palabras):
+        if palabras and all(p in tn for p in palabras):
             return True
     return False
 
 
-def _prefiltro_comuna(terminos):
-    """WHERE LOWER(comuna) LIKE ... (OR por palabra) para prefiltrar en SQL."""
+def _prefiltro(columna, terminos):
+    """WHERE LOWER(<columna>) LIKE ... (OR por palabra) para prefiltrar en SQL."""
     palabras = sorted({p for t in terminos for p in _norm(t).split()})
     if not palabras:
         return "", []
-    clausulas = " OR ".join(["LOWER(comuna) LIKE %s"] * len(palabras))
+    clausulas = " OR ".join([f"LOWER({columna}) LIKE %s"] * len(palabras))
     params = [f"%{p}%" for p in palabras]
     return f"WHERE {clausulas}", params
 
@@ -100,28 +100,32 @@ def _max_correlativo():
 
 # ---------- lectura desde Ayres (solo SELECT) ----------
 def _leer_ayres(terminos):
-    """Devuelve (instalaciones, clientes) de Ayres para las comunas pedidas."""
+    """Devuelve (instalaciones, clientes) de Ayres para las razones sociales pedidas.
+
+    Filtra CLIENTES por razon_social y trae TODAS sus instalaciones (sin filtrar
+    por comuna).
+    """
     if "ayres" not in connections.databases:
         raise RuntimeError(
             "La conexion 'ayres' no esta configurada. El sync solo corre en el "
             "servidor (develop/prod) con AYRES_DATABASE_URL definida."
         )
 
-    where, params = _prefiltro_comuna(terminos)
+    where, params = _prefiltro("razon_social", terminos)
     try:
         with connections["ayres"].cursor() as cur:
-            cur.execute(f"SELECT * FROM instalaciones {where}", params)
-            instalaciones = _filas(cur)
+            cur.execute(f"SELECT * FROM clientes {where}", params)
+            clientes = _filas(cur)
 
-            # Refinar en Python (match tolerante) y sacar los cliente_id.
-            instalaciones = [i for i in instalaciones if _comuna_coincide(i.get("comuna"), terminos)]
-            cliente_ids = sorted({i["cliente_id"] for i in instalaciones if i.get("cliente_id")})
+            # Refinar en Python (match tolerante) y sacar los id de cliente.
+            clientes = [c for c in clientes if _coincide(c.get("razon_social"), terminos)]
+            cliente_ids = sorted({c["id"] for c in clientes if c.get("id")})
 
-            clientes = []
+            instalaciones = []
             if cliente_ids:
                 marcas = ", ".join(["%s"] * len(cliente_ids))
-                cur.execute(f"SELECT * FROM clientes WHERE id IN ({marcas})", cliente_ids)
-                clientes = _filas(cur)
+                cur.execute(f"SELECT * FROM instalaciones WHERE cliente_id IN ({marcas})", cliente_ids)
+                instalaciones = _filas(cur)
     except RuntimeError:
         raise
     except Exception as e:  # error de conexion / SQL: mensaje claro
@@ -133,8 +137,8 @@ def _leer_ayres(terminos):
 # ---------- sincronizacion (upsert al espejo) ----------
 def sincronizar(dry_run=False, escribir=print):
     """Lee Ayres y hace upsert del espejo. Devuelve un dict resumen."""
-    terminos = settings.SYNC_COMUNAS
-    escribir(f"Comunas a sincronizar: {terminos}")
+    terminos = settings.SYNC_CLIENTES_RAZON
+    escribir(f"Clientes a sincronizar (razon_social): {terminos}")
 
     instalaciones, clientes = _leer_ayres(terminos)
     escribir(f"Ayres devolvio {len(clientes)} cliente(s) y {len(instalaciones)} instalacion(es).")
