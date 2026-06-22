@@ -1,13 +1,49 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 
 {% block titulo %}Puntos de control — Rondas{% endblock %}
 
 {% block contenido %}
-<h1>Puntos de control</h1>
-<p class="contexto-instalacion">Instalación: <strong>{{ instalacion_nombre }}</strong></p>
-
-<div class="en-construccion">
-    <span class="etiqueta">En construcción</span>
-    <p>El módulo <strong>Puntos de control</strong> estará disponible próximamente.</p>
+<div class="modulo-cabecera">
+    <div>
+        <h1>Puntos de control</h1>
+        <p class="contexto-instalacion">Instalación: <strong>{{ instalacion_nombre }}</strong></p>
+    </div>
+    {# Sin acción aún (PARTE 1: solo lectura). #}
+    <a href="#" class="btn btn-primario">Nuevo checkpoint</a>
 </div>
+
+{% if checkpoints %}
+<div class="tabla-scroll">
+    <table class="tabla-objetivos">
+        <thead>
+            <tr>
+                <th>Nombre</th>
+                <th>Tipo</th>
+                <th>Observación</th>
+                <th>Acciones</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for cp in checkpoints %}
+                <tr class="fila-objetivo">
+                    <td data-col="Nombre">{{ cp.nombre }}</td>
+                    <td data-col="Tipo">{{ cp.tipo|default:"—" }}</td>
+                    <td data-col="Observación">{{ cp.observacion|default:"—" }}</td>
+                    <td data-col="Acciones" class="col-accion">
+                        {# Placeholders sin funcionalidad (PARTE 1). #}
+                        <a href="#" class="accion-link">Editar</a>
+                        <a href="#" class="accion-link accion-peligro">Eliminar</a>
+                        <a href="#" class="accion-link">Ver QR</a>
+                        <a href="#" class="accion-link">Ver imagen</a>
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="estado-vacio">
+    <p>Aún no hay puntos de control en esta instalación.</p>
+</div>
+{% endif %}
 {% endblock %}

@@ -221,6 +221,22 @@ body.menu-abierto .menu-toggle span:nth-child(3) { transform: translateY(-7px) r
 .col-accion form { margin: 0; }
 .btn-sm { padding: 6px 12px; font-size: 0.82rem; }
 
+/* Acciones por fila como botones de texto (sin íconos de librerías). */
+.accion-link {
+    color: var(--rojo);
+    font-weight: 600;
+    margin-right: 12px;
+    white-space: nowrap;
+}
+.accion-link:last-child { margin-right: 0; }
+.accion-link:hover { color: var(--rojo-hover); text-decoration: underline; }
+.accion-peligro { color: var(--oscuro); }
+.accion-peligro:hover { color: var(--rojo); }
+
+/* Selección de texto/fila en rojo de marca, consistente en todo el panel. */
+::selection { background: #FBEDED; color: var(--rojo); }
+.tabla-objetivos tbody tr.fila-objetivo:hover td { background: var(--gris-fondo); }
+
 /* En móvil, cada fila se apila como tarjeta (etiqueta : valor). */
 @media (max-width: 720px) {
     .tabla-objetivos { min-width: 0; }
@@ -388,6 +404,28 @@ body.menu-abierto .menu-toggle span:nth-child(3) { transform: translateY(-7px) r
     border-radius: 12px;
     margin-bottom: 14px;
 }
+
+/* Cabecera de módulo: título a la izquierda, acción primaria a la derecha. */
+.modulo-cabecera {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+}
+.modulo-cabecera h1 { margin-bottom: 2px; }
+
+/* Estado vacío on-brand (sin registros que mostrar). */
+.estado-vacio {
+    background: var(--blanco);
+    border: 1px dashed var(--gris-borde);
+    border-radius: 8px;
+    padding: 40px 24px;
+    text-align: center;
+    color: #777;
+}
+.estado-vacio p { margin: 0; }
 
 /* ---------- Botones ---------- */
 .btn { display: inline-block; padding: 9px 16px; border-radius: 6px; font-size: 0.9rem; cursor: pointer; border: 1px solid transparent; }
