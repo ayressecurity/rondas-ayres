@@ -511,6 +511,27 @@ body.menu-abierto .menu-toggle span:nth-child(3) { transform: translateY(-7px) r
 
 .form-acciones { display: flex; gap: 10px; margin-top: 8px; }
 
+/* Subtítulo de sección dentro de un formulario. */
+.form-seccion {
+    font-size: 1.05rem;
+    color: var(--oscuro);
+    margin: 22px 0 12px;
+    padding-bottom: 6px;
+    border-bottom: 2px solid var(--rojo);
+}
+.form-seccion:first-of-type { margin-top: 0; }
+
+/* Listas de opciones (checkboxes / radios) on-brand. */
+.opciones-lista { display: flex; flex-direction: column; gap: 8px; }
+.opcion-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 400;
+    cursor: pointer;
+}
+.opcion-check input { width: auto; accent-color: var(--rojo); }
+
 /* ---------- Modal de QR ---------- */
 .qr-modal {
     position: fixed;

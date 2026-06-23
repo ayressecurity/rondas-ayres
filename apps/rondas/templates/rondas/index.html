@@ -1,13 +1,50 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 
 {% block titulo %}Rondas — Rondas{% endblock %}
 
 {% block contenido %}
-<h1>Rondas</h1>
-<p class="contexto-instalacion">Instalación: <strong>{{ instalacion_nombre }}</strong></p>
-
-<div class="en-construccion">
-    <span class="etiqueta">En construcción</span>
-    <p>El módulo <strong>Rondas</strong> estará disponible próximamente.</p>
+<div class="modulo-cabecera">
+    <div>
+        <h1>Rondas</h1>
+        <p class="contexto-instalacion">Instalación: <strong>{{ instalacion_nombre }}</strong></p>
+    </div>
+    <div class="cabecera-acciones">
+        <a href="{% url 'rondas:nueva' %}" class="btn btn-primario">Nueva ronda</a>
+        <a href="{% url 'checkpoints:index' %}" class="btn btn-secundario">Puntos de control</a>
+    </div>
 </div>
+
+{% if rondas %}
+<div class="tabla-scroll">
+    <table class="tabla-objetivos">
+        <thead>
+            <tr>
+                <th>Nombre</th>
+                <th>Fecha de inicio</th>
+                <th>Estado</th>
+                <th>N° de checkpoints</th>
+                <th>Acciones</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ronda in rondas %}
+                <tr class="fila-objetivo">
+                    <td data-col="Nombre">{{ ronda.nombre }}</td>
+                    <td data-col="Fecha de inicio">{{ ronda.fecha_inicio|date:"Y-m-d" }}</td>
+                    <td data-col="Estado">{{ ronda.get_estado_display }}</td>
+                    <td data-col="N° de checkpoints">{{ ronda.num_checkpoints }}</td>
+                    <td data-col="Acciones" class="col-accion">
+                        <a href="{% url 'rondas:editar' ronda.id %}" class="accion-link">Editar</a>
+                        <a href="{% url 'rondas:eliminar' ronda.id %}" class="accion-link accion-peligro">Eliminar</a>
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="estado-vacio">
+    <p>Aún no hay rondas en esta instalación.</p>
+</div>
+{% endif %}
 {% endblock %}

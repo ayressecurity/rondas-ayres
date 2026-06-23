@@ -31,6 +31,10 @@ class Ronda(models.Model):
     instalacion_id = models.BigIntegerField(db_index=True)  # (*) espejo, SIN FK
     nombre = models.CharField(max_length=120)
     fecha_inicio = models.DateField()
+    # Modo de orden de los puntos: True = el sistema asigna orden (aleatorio al
+    # crear); False = el guardia elige el orden en terreno. No viene del esquema
+    # base; se agrega para recordar el modo elegido por ronda.
+    orden_aleatorio = models.BooleanField(default=True)
     estado = models.CharField(max_length=10, choices=EstadoGenerico.choices, default=EstadoGenerico.ACTIVA)
     creado_en = models.DateTimeField(auto_now_add=True)
 

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block titulo %}Eliminar ronda — Rondas{% endblock %}
+
+{% block contenido %}
+<div class="modulo-cabecera">
+    <div>
+        <h1>Eliminar ronda</h1>
+        <p class="contexto-instalacion">Instalación: <strong>{{ instalacion_nombre }}</strong></p>
+    </div>
+</div>
+
+<div class="confirmar-eliminar">
+    <p>¿Seguro que deseas eliminar la ronda <strong>«{{ ronda.nombre }}»</strong>?</p>
+    <p class="confirmar-nota">Quedará inactiva y dejará de aparecer en la lista. No se borra físicamente.</p>
+
+    <form method="post" action="{% url 'rondas:eliminar' ronda.id %}" class="form-acciones">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-primario">Sí, eliminar</button>
+        <a href="{% url 'rondas:index' %}" class="btn btn-secundario">Cancelar</a>
+    </form>
+</div>
+{% endblock %}

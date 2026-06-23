@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block titulo %}{% if modo == "editar" %}Editar ronda{% else %}Nueva ronda{% endif %} — Rondas{% endblock %}
+
+{% block contenido %}
+<div class="modulo-cabecera">
+    <div>
+        <h1>{% if modo == "editar" %}Editar ronda{% else %}Nueva ronda{% endif %}</h1>
+        <p class="contexto-instalacion">Instalación: <strong>{{ instalacion_nombre }}</strong></p>
+    </div>
+</div>
+
+{% if form.non_field_errors %}
+    <div class="form-errores">
+        {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+{% endif %}
+
+<form method="post" class="form-tarjeta" novalidate>
+    {% csrf_token %}
+
+    {# ---------- SECCIÓN 1 — Datos ---------- #}
+    <h2 class="form-seccion">Datos de la ronda</h2>
+
+    <div class="campo-form">
+        <label for="{{ form.nombre.id_for_label }}">{{ form.nombre.label }} <span class="req">*</span></label>
+        {{ form.nombre }}
+        {% for error in form.nombre.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+    </div>
+
+    <div class="campo-form">
+        <label for="{{ form.fecha_inicio.id_for_label }}">{{ form.fecha_inicio.label }} <span class="req">*</span></label>
+        {{ form.fecha_inicio }}
+        {% for error in form.fecha_inicio.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+    </div>
+
+    {# ---------- SECCIÓN 2 — Checkpoints ---------- #}
+    <h2 class="form-seccion">Checkpoints de la ronda</h2>
+
+    <div class="campo-form">
+        <label>{{ form.puntos.label }} <span class="req">*</span></label>
+        {% if form.puntos.field.queryset %}
+            <div class="opciones-lista">
+                {% for cb in form.puntos %}
+                    <label class="opcion-check">{{ cb.tag }} <span>{{ cb.choice_label }}</span></label>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p class="campo-ayuda">
+                Esta instalación no tiene puntos de control activos.
+                <a href="{% url 'checkpoints:nuevo' %}">Crea uno primero</a>.
+            </p>
+        {% endif %}
+        {% for error in form.puntos.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+    </div>
+
+    <div class="campo-form">
+        <label>{{ form.modo_orden.label }}</label>
+        <div class="opciones-lista">
+            {% for radio in form.modo_orden %}
+                <label class="opcion-check">{{ radio.tag }} <span>{{ radio.choice_label }}</span></label>
+            {% endfor %}
+        </div>
+        {% for error in form.modo_orden.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+    </div>
+
+    <div class="form-acciones">
+        <button type="submit" class="btn btn-primario">Guardar</button>
+        <a href="{% url 'rondas:index' %}" class="btn btn-secundario">Cancelar</a>
+    </div>
+</form>
+{% endblock %}
