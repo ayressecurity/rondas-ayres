@@ -87,6 +87,8 @@ def escaner_registrar(request):
             estado="ok",
         )
 
+    # En BD se guarda con USE_TZ (UTC). Para MOSTRAR: localtime -> Santiago de
+    # Chile (TIME_ZONE) y formato HH:MM:SS, sin microsegundos/decimales.
     return JsonResponse({
         "ok": True,
         "checkpoint": cp.nombre,

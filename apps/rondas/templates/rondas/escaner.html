@@ -12,11 +12,15 @@
 
 <div class="escaner-wrap">
     <p class="escaner-ayuda">
-        Apunta la cámara al código QR de un punto de control. Cada lectura válida
-        queda registrada en el libro de novedades. Puedes seguir escaneando sin recargar.
+        Apunta la cámara al código QR de un punto de control. Una lectura válida
+        queda registrada en el libro de novedades y detiene la cámara; usa el botón
+        para escanear otro.
     </p>
     <div id="reader" class="escaner-reader"></div>
     <div id="escanerResultado" class="escaner-resultado" aria-live="polite"></div>
+    <div class="form-acciones">
+        <button type="button" id="btnReiniciar" class="btn btn-primario" hidden>Escanear otro</button>
+    </div>
 </div>
 {% endblock %}
 
@@ -31,12 +35,46 @@
     var CSRF = "{{ csrf_token }}";
 
     var resultado = document.getElementById("escanerResultado");
-    var bloqueado = false;   // evita registrar el mismo QR muchas veces seguidas
+    var btn = document.getElementById("btnReiniciar");
+    var scanner = null;
+    var procesando = false;   // evita ráfagas: una lectura a la vez
 
     // textContent (no innerHTML) para no inyectar HTML del nombre del checkpoint.
     function pintar(clase, texto) {
         resultado.className = "escaner-resultado " + clase;
         resultado.textContent = texto;
+    }
+
+    function limpiarResultado() {
+        resultado.className = "escaner-resultado";  // vuelve a ocultarse (CSS)
+        resultado.textContent = "";
+    }
+
+    // Detiene la cámara y borra la UI del lector (cierra el escáner).
+    function detener() {
+        if (scanner) {
+            scanner.clear().catch(function () { /* ya estaba detenido */ });
+            scanner = null;
+        }
+    }
+
+    // Arranca (o reinicia) el lector: pide cámara y dibuja su propia UI.
+    function iniciar() {
+        limpiarResultado();
+        btn.hidden = true;
+        procesando = false;
+        scanner = new Html5QrcodeScanner(
+            "reader",
+            { fps: 10, qrbox: { width: 250, height: 250 } },
+            false
+        );
+        scanner.render(onScan, function () { /* ignora fallos de lectura por frame */ });
+    }
+
+    // Muestra el botón con la etiqueta según el caso (éxito vs reintento).
+    function mostrarBoton(etiqueta) {
+        btn.textContent = etiqueta;
+        btn.hidden = false;
     }
 
     function registrar(qrToken) {
@@ -49,39 +87,39 @@
             body: "qr_token=" + encodeURIComponent(qrToken)
         }).then(function (r) {
             return r.json().then(function (data) { return { ok: r.ok, data: data }; });
-        }).then(function (res) {
-            if (res.ok && res.data.ok) {
-                pintar("escaner-ok", "✓ Escaneo registrado: " + res.data.checkpoint + " — " + res.data.hora);
-            } else {
-                pintar("escaner-error", "✕ " + (res.data.error || "No se pudo registrar el escaneo."));
-            }
-        }).catch(function () {
-            pintar("escaner-error", "✕ Error de conexión. Intenta de nuevo.");
         });
     }
 
     function onScan(texto) {
-        if (bloqueado) { return; }
-        bloqueado = true;
+        if (procesando) { return; }     // ignora lecturas en ráfaga
+        procesando = true;
+        detener();                       // corta la cámara apenas hay una lectura
         pintar("escaner-procesando", "Procesando…");
-        registrar((texto || "").trim()).then(function () {
-            // Pequeña pausa para no re-registrar el mismo QR en pantalla.
-            setTimeout(function () { bloqueado = false; }, 2500);
+
+        registrar((texto || "").trim()).then(function (res) {
+            if (res.ok && res.data.ok) {
+                // ÉXITO: cámara ya detenida; mostramos punto + hora y "Escanear otro".
+                pintar("escaner-ok", "Punto escaneado: " + res.data.checkpoint + " — " + res.data.hora);
+                mostrarBoton("Escanear otro");
+            } else {
+                // FALLO: motivo claro y permitir reintentar sin recargar.
+                pintar("escaner-error", "No se pudo escanear: " + (res.data.error || "Error desconocido."));
+                mostrarBoton("Reintentar");
+            }
+        }).catch(function () {
+            pintar("escaner-error", "No se pudo escanear: error de conexión.");
+            mostrarBoton("Reintentar");
         });
     }
+
+    btn.addEventListener("click", iniciar);
 
     if (typeof Html5QrcodeScanner === "undefined") {
         pintar("escaner-error", "No se pudo cargar el lector de QR (revisa la conexión).");
         return;
     }
 
-    // El scanner pide permiso de cámara y dibuja su propia UI (cámara/archivo).
-    var scanner = new Html5QrcodeScanner(
-        "reader",
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        false
-    );
-    scanner.render(onScan, function () { /* ignora fallos de lectura por frame */ });
+    iniciar();
 })();
 </script>
 {% endblock %}
