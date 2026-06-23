@@ -19,11 +19,7 @@
 <form method="post" enctype="multipart/form-data" class="form-tarjeta" novalidate>
     {% csrf_token %}
 
-    <div class="campo-form">
-        <label for="{{ form.tipo.id_for_label }}">{{ form.tipo.label }}</label>
-        {{ form.tipo }}
-        {% for error in form.tipo.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
-    </div>
+    {# El tipo lo fija el backend ("Codigo QR"): no se muestra en el formulario. #}
 
     <div class="campo-form">
         <label for="{{ form.nombre.id_for_label }}">{{ form.nombre.label }} <span class="req">*</span></label>

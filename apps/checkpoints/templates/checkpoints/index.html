@@ -34,6 +34,18 @@
                         <a href="{% url 'checkpoints:qr' cp.id %}" class="accion-link accion-qr"
                            data-qr-url="{% url 'checkpoints:qr' cp.id %}"
                            data-qr-nombre="{{ cp.nombre }}" target="_blank" rel="noopener">Ver QR</a>
+                        <a href="{% url 'checkpoints:mapa' cp.id %}" class="accion-link accion-mapa"
+                           data-mapa-url="{% url 'checkpoints:mapa' cp.id %}"
+                           data-mapa-nombre="{{ cp.nombre }}" target="_blank" rel="noopener"
+                           title="Ver mapa" aria-label="Ver mapa">
+                            <svg class="icono-mapa" viewBox="0 0 24 24" width="16" height="16"
+                                 fill="none" stroke="currentColor" stroke-width="2"
+                                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M12 21s-6-5.686-6-10a6 6 0 1 1 12 0c0 4.314-6 10-6 10z"/>
+                                <circle cx="12" cy="11" r="2"/>
+                            </svg>
+                            Ver mapa
+                        </a>
                         {# Ver imagen: PARTE 4 (aún sin acción). #}
                         <a href="#" class="accion-link">Ver imagen</a>
                     </td>
@@ -63,6 +75,25 @@
         <div class="form-acciones">
             <a class="btn btn-primario" id="qrModalDescargar" href="#">Descargar PNG</a>
             <button type="button" class="btn btn-secundario" data-qr-cerrar>Cerrar</button>
+        </div>
+    </div>
+</div>
+
+{# Modal del mapa: embebe Google Maps en la posición exacta del punto (backend). #}
+<div class="mapa-modal" id="mapaModal" hidden>
+    <div class="mapa-modal-overlay" data-mapa-cerrar></div>
+    <div class="mapa-modal-caja" role="dialog" aria-modal="true" aria-labelledby="mapaModalTitulo">
+        <div class="qr-modal-cabecera">
+            <h2 id="mapaModalTitulo">Ubicación</h2>
+            <button type="button" class="qr-modal-cerrar" data-mapa-cerrar aria-label="Cerrar">×</button>
+        </div>
+        <p class="qr-modal-sub" id="mapaModalNombre"></p>
+        <div class="mapa-modal-frame">
+            <iframe id="mapaModalIframe" src="" title="Mapa del punto de control"
+                    loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+        </div>
+        <div class="form-acciones">
+            <button type="button" class="btn btn-secundario" data-mapa-cerrar>Cerrar</button>
         </div>
     </div>
 </div>

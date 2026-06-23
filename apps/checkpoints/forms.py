@@ -24,9 +24,9 @@ class PuntoControlForm(forms.ModelForm):
 
     class Meta:
         model = PuntoControl
-        fields = ["tipo", "nombre", "observacion", "lat", "lng", "tolerancia_mts"]
+        # 'tipo' NO se expone: lo fija el backend SIEMPRE como "Codigo QR".
+        fields = ["nombre", "observacion", "lat", "lng", "tolerancia_mts"]
         labels = {
-            "tipo": "Tipo",
             "nombre": "Nombre",
             "observacion": "Observación",
             "lat": "Latitud",
@@ -34,7 +34,6 @@ class PuntoControlForm(forms.ModelForm):
             "tolerancia_mts": "Tolerancia (mts)",
         }
         widgets = {
-            "tipo": forms.TextInput(attrs={"maxlength": 40}),
             "nombre": forms.TextInput(attrs={"maxlength": 120}),
             "observacion": forms.Textarea(attrs={"rows": 3}),
             "lat": forms.NumberInput(attrs={"step": "any"}),
@@ -46,7 +45,6 @@ class PuntoControlForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         # nombre es obligatorio; el resto opcional (coincide con el esquema).
         self.fields["nombre"].required = True
-        self.fields["tipo"].required = False
         self.fields["observacion"].required = False
         self.fields["lat"].required = True
         self.fields["lng"].required = True
@@ -54,8 +52,11 @@ class PuntoControlForm(forms.ModelForm):
         # Tolerancia entera >= 0.
         self.fields["tolerancia_mts"].validators.append(MinValueValidator(0))
         if not self.is_bound and self.instance.pk is None:
-            # Alta: default de esquema.
+            # Alta: defaults. Tolerancia de esquema + posición por defecto
+            # (sede/zona habitual de Las Condes) para no partir en (0, 0).
             self.fields["tolerancia_mts"].initial = 30
+            self.fields["lat"].initial = "-33.359000"
+            self.fields["lng"].initial = "-70.507100"
 
     def clean_nombre(self):
         nombre = (self.cleaned_data.get("nombre") or "").strip()

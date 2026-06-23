@@ -20,7 +20,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.comun.decoradores import requiere_instalacion
 from .forms import PuntoControlForm
-from .models import PuntoControl
+from .models import PuntoControl, TIPO_QR
 
 
 def _checkpoint_de_la_instalacion(request, pk):
@@ -61,6 +61,7 @@ def nuevo(request):
         if form.is_valid():
             cp = form.save(commit=False)
             cp.instalacion_id = request.session["instalacion_id"]   # SIEMPRE de la sesion
+            cp.tipo = TIPO_QR                                       # SIEMPRE lo fija el backend
             cp.validar_posicion = not form.cleaned_data["no_validar"]
             cp.qr_token = str(uuid4())                              # NOT NULL unique
             cp.activo = True
@@ -84,6 +85,7 @@ def editar(request, pk):
         form = PuntoControlForm(request.POST, request.FILES, instance=cp)
         if form.is_valid():
             cp = form.save(commit=False)
+            cp.tipo = TIPO_QR                                       # SIEMPRE lo fija el backend
             cp.validar_posicion = not form.cleaned_data["no_validar"]
             foto_path = _guardar_foto(form.cleaned_data.get("foto"))
             if foto_path:
@@ -112,6 +114,23 @@ def qr(request, pk):
     if request.GET.get("descargar"):
         response["Content-Disposition"] = f'attachment; filename="qr-checkpoint-{cp.id}.png"'
     return response
+
+
+@login_required
+@requiere_instalacion
+def mapa(request, pk):
+    """
+    Mini-página que embebe Google Maps centrado EXACTAMENTE en la lat/lng del
+    punto de control. Se carga dentro de un iframe en el modal de la lista.
+    El backend arma la URL leyendo lat/lng de la BD, así la posición mostrada
+    coincide siempre con la del QR (la fuente es la misma fila). 404 si el punto
+    es de otra instalacion.
+    """
+    cp = _checkpoint_de_la_instalacion(request, pk)
+    # Coordenadas con punto decimal e independientes del locale (la plantilla
+    # las interpola directo en la URL de Google Maps).
+    src = f"https://maps.google.com/maps?q={cp.lat},{cp.lng}&z=17&hl=es&output=embed"
+    return render(request, "checkpoints/mapa.html", {"cp": cp, "src": src})
 
 
 @login_required

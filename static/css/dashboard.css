@@ -560,6 +560,49 @@ body.menu-abierto .menu-toggle span:nth-child(3) { transform: translateY(-7px) r
 }
 .qr-modal-img img { width: 240px; height: 240px; max-width: 100%; image-rendering: pixelated; }
 
+/* ---------- Modal de mapa (Google Maps embebido) ---------- */
+.mapa-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.mapa-modal[hidden] { display: none; }
+.mapa-modal-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(51, 51, 51, 0.55);
+}
+.mapa-modal-caja {
+    position: relative;
+    background: var(--blanco);
+    border-radius: 10px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+    padding: 22px;
+    width: 100%;
+    max-width: 720px;
+    border-top: 4px solid var(--rojo);
+}
+.mapa-modal-frame {
+    border: 1px solid var(--gris-borde);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 16px;
+}
+.mapa-modal-frame iframe {
+    display: block;
+    border: 0;
+    width: 100%;
+    height: 420px;
+    max-height: 60vh;
+}
+/* Ícono de mapa en la acción de la tabla: alinea con el texto del enlace. */
+.accion-mapa { display: inline-flex; align-items: center; gap: 4px; }
+.icono-mapa { vertical-align: middle; }
+
 /* Confirmación de borrado. */
 .confirmar-eliminar {
     background: var(--blanco);

@@ -4,10 +4,14 @@ instalacion_id = referencia al espejo (SIN FK).
 """
 from django.db import models
 
+# Tipo único de punto de control por ahora: lo fija SIEMPRE el backend (el campo
+# en BD es varchar). El usuario no lo elige; todo registro nace como "Codigo QR".
+TIPO_QR = "Codigo QR"
+
 
 class PuntoControl(models.Model):
     instalacion_id = models.BigIntegerField(db_index=True)  # (*) espejo, SIN FK
-    tipo = models.CharField(max_length=40, null=True, blank=True)
+    tipo = models.CharField(max_length=40, default=TIPO_QR, null=True, blank=True)
     nombre = models.CharField(max_length=120)
     observacion = models.TextField(null=True, blank=True)
     lat = models.DecimalField(max_digits=10, decimal_places=8)

@@ -107,6 +107,46 @@
     });
 })();
 
+// Modal de mapa (checkpoints): embebe Google Maps en la posición del punto.
+// El src lo arma el backend (vista 'mapa') leyendo lat/lng de la BD.
+// Sin JS, el enlace abre el mapa en una pestaña (target="_blank").
+(function () {
+    "use strict";
+
+    var modal = document.getElementById("mapaModal");
+    if (!modal) { return; }
+
+    var iframe = document.getElementById("mapaModalIframe");
+    var nombre = document.getElementById("mapaModalNombre");
+    var enlaces = document.querySelectorAll(".accion-mapa");
+
+    function abrir(url, nombreCp) {
+        iframe.src = url;
+        nombre.textContent = nombreCp || "";
+        modal.hidden = false;
+    }
+
+    function cerrar() {
+        modal.hidden = true;
+        iframe.src = "";   // libera el mapa al cerrar
+    }
+
+    enlaces.forEach(function (a) {
+        a.addEventListener("click", function (e) {
+            e.preventDefault();
+            abrir(a.getAttribute("data-mapa-url"), a.getAttribute("data-mapa-nombre"));
+        });
+    });
+
+    modal.addEventListener("click", function (e) {
+        if (e.target.hasAttribute("data-mapa-cerrar")) { cerrar(); }
+    });
+
+    document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && !modal.hidden) { cerrar(); }
+    });
+})();
+
 // Tabla "Objetivos": seleccionar instalación haciendo clic en la fila.
 (function () {
     "use strict";
