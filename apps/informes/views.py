@@ -18,3 +18,14 @@ def informe_rondas(request):
         titulo="Informe de Rondas",
         aplica_filtro=lambda qs: qs.exclude(tipo_evento__categoria=CategoriaEvento.NOVEDAD),
     )
+
+
+@login_required
+@requiere_instalacion
+def informe_novedades(request):
+    """ÚNICAMENTE eventos de categoría 'novedad'. Misma base/tabla que Rondas."""
+    return render_informe(
+        request,
+        titulo="Informe de Novedades",
+        aplica_filtro=lambda qs: qs.filter(tipo_evento__categoria=CategoriaEvento.NOVEDAD),
+    )
