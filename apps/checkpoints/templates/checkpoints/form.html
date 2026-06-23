@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block titulo %}{% if modo == "editar" %}Editar punto de control{% else %}Nuevo punto de control{% endif %} — Rondas{% endblock %}
+
+{% block contenido %}
+<div class="modulo-cabecera">
+    <div>
+        <h1>{% if modo == "editar" %}Editar punto de control{% else %}Nuevo punto de control{% endif %}</h1>
+        <p class="contexto-instalacion">Instalación: <strong>{{ instalacion_nombre }}</strong></p>
+    </div>
+</div>
+
+{% if form.non_field_errors %}
+    <div class="form-errores">
+        {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+{% endif %}
+
+<form method="post" enctype="multipart/form-data" class="form-tarjeta" novalidate>
+    {% csrf_token %}
+
+    <div class="campo-form">
+        <label for="{{ form.tipo.id_for_label }}">{{ form.tipo.label }}</label>
+        {{ form.tipo }}
+        {% for error in form.tipo.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+    </div>
+
+    <div class="campo-form">
+        <label for="{{ form.nombre.id_for_label }}">{{ form.nombre.label }} <span class="req">*</span></label>
+        {{ form.nombre }}
+        {% for error in form.nombre.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+    </div>
+
+    <div class="campo-form">
+        <label for="{{ form.observacion.id_for_label }}">{{ form.observacion.label }}</label>
+        {{ form.observacion }}
+        {% for error in form.observacion.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+    </div>
+
+    <div class="campo-fila">
+        <div class="campo-form">
+            <label for="{{ form.lat.id_for_label }}">{{ form.lat.label }} <span class="req">*</span></label>
+            {{ form.lat }}
+            {% for error in form.lat.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+        </div>
+        <div class="campo-form">
+            <label for="{{ form.lng.id_for_label }}">{{ form.lng.label }} <span class="req">*</span></label>
+            {{ form.lng }}
+            {% for error in form.lng.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+        </div>
+        <div class="campo-form">
+            <label for="{{ form.tolerancia_mts.id_for_label }}">{{ form.tolerancia_mts.label }} <span class="req">*</span></label>
+            {{ form.tolerancia_mts }}
+            {% for error in form.tolerancia_mts.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+        </div>
+    </div>
+
+    <div class="campo-form campo-check">
+        <label>{{ form.no_validar }} {{ form.no_validar.label }}</label>
+        <small class="campo-ayuda">{{ form.no_validar.help_text }}</small>
+        {% for error in form.no_validar.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+    </div>
+
+    <div class="campo-form">
+        <label for="{{ form.foto.id_for_label }}">{{ form.foto.label }}</label>
+        {% if cp and cp.foto_path %}
+            <small class="campo-ayuda">Foto actual: {{ cp.foto_path }} (sube otra para reemplazarla).</small>
+        {% endif %}
+        {{ form.foto }}
+        {% for error in form.foto.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+    </div>
+
+    <div class="form-acciones">
+        <button type="submit" class="btn btn-primario">Guardar</button>
+        <a href="{% url 'checkpoints:index' %}" class="btn btn-secundario">Cancelar</a>
+    </div>
+</form>
+{% endblock %}

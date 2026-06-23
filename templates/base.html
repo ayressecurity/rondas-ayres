@@ -76,6 +76,13 @@
         <div class="overlay-sidebar" id="overlaySidebar" hidden></div>
 
         <main class="contenido">
+            {% if messages %}
+                <div class="mensajes">
+                    {% for mensaje in messages %}
+                        <div class="mensaje mensaje-{{ mensaje.tags }}">{{ mensaje }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
             {% block contenido %}{% endblock %}
         </main>
     </div>

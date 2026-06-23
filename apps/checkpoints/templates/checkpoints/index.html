@@ -8,8 +8,7 @@
         <h1>Puntos de control</h1>
         <p class="contexto-instalacion">Instalación: <strong>{{ instalacion_nombre }}</strong></p>
     </div>
-    {# Sin acción aún (PARTE 1: solo lectura). #}
-    <a href="#" class="btn btn-primario">Nuevo checkpoint</a>
+    <a href="{% url 'checkpoints:nuevo' %}" class="btn btn-primario">Nuevo checkpoint</a>
 </div>
 
 {% if checkpoints %}
@@ -30,9 +29,9 @@
                     <td data-col="Tipo">{{ cp.tipo|default:"—" }}</td>
                     <td data-col="Observación">{{ cp.observacion|default:"—" }}</td>
                     <td data-col="Acciones" class="col-accion">
-                        {# Placeholders sin funcionalidad (PARTE 1). #}
-                        <a href="#" class="accion-link">Editar</a>
-                        <a href="#" class="accion-link accion-peligro">Eliminar</a>
+                        <a href="{% url 'checkpoints:editar' cp.id %}" class="accion-link">Editar</a>
+                        <a href="{% url 'checkpoints:eliminar' cp.id %}" class="accion-link accion-peligro">Eliminar</a>
+                        {# QR y foto: PARTE 3 (aún sin acción). #}
                         <a href="#" class="accion-link">Ver QR</a>
                         <a href="#" class="accion-link">Ver imagen</a>
                     </td>

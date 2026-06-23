@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block titulo %}Eliminar punto de control — Rondas{% endblock %}
+
+{% block contenido %}
+<div class="modulo-cabecera">
+    <div>
+        <h1>Eliminar punto de control</h1>
+        <p class="contexto-instalacion">Instalación: <strong>{{ instalacion_nombre }}</strong></p>
+    </div>
+</div>
+
+<div class="confirmar-eliminar">
+    <p>¿Seguro que deseas eliminar el punto de control <strong>«{{ cp.nombre }}»</strong>?</p>
+    <p class="confirmar-nota">Dejará de aparecer en la lista de la instalación. Esta acción no se puede deshacer desde la web.</p>
+
+    <form method="post" action="{% url 'checkpoints:eliminar' cp.id %}" class="form-acciones">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-primario">Sí, eliminar</button>
+        <a href="{% url 'checkpoints:index' %}" class="btn btn-secundario">Cancelar</a>
+    </form>
+</div>
+{% endblock %}

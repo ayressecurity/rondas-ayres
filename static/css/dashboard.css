@@ -445,6 +445,82 @@ body.menu-abierto .menu-toggle span:nth-child(3) { transform: translateY(-7px) r
 /* Botón de logout en el navbar (form inline). */
 .navbar-sesion form { margin: 0; }
 
+/* ---------- Mensajes flash (success / error) ---------- */
+.mensajes { margin-bottom: 18px; }
+.mensaje {
+    padding: 11px 16px;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    border: 1px solid transparent;
+    font-size: 0.9rem;
+}
+.mensaje-success { background: #E6F4EA; border-color: #BFE3C9; color: #1E7E34; }
+.mensaje-error, .mensaje-danger { background: #FBEDED; border-color: var(--rojo); color: var(--rojo); }
+.mensaje-warning { background: #FFF7E6; border-color: #F0D38A; color: #8A6D1B; }
+.mensaje-info { background: #F0F0F0; border-color: var(--gris-borde); color: var(--oscuro); }
+
+/* ---------- Formularios on-brand ---------- */
+.form-tarjeta {
+    background: var(--blanco);
+    border: 1px solid var(--gris-borde);
+    border-radius: 8px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    padding: 22px;
+    max-width: 760px;
+}
+.campo-form { margin-bottom: 16px; }
+.campo-form label { display: block; font-weight: 600; color: var(--oscuro); margin-bottom: 6px; }
+.campo-form input[type="text"],
+.campo-form input[type="number"],
+.campo-form input[type="file"],
+.campo-form textarea {
+    width: 100%;
+    padding: 9px 11px;
+    border: 1px solid var(--gris-borde);
+    border-radius: 6px;
+    font: inherit;
+    color: var(--oscuro);
+    background: var(--blanco);
+}
+.campo-form input:focus,
+.campo-form textarea:focus {
+    outline: none;
+    border-color: var(--rojo);
+    box-shadow: 0 0 0 2px #FBEDED;
+}
+.campo-form textarea { resize: vertical; }
+.campo-fila { display: flex; gap: 16px; flex-wrap: wrap; }
+.campo-fila .campo-form { flex: 1 1 180px; }
+.campo-check label { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.campo-check input[type="checkbox"] { width: auto; accent-color: var(--rojo); }
+.campo-ayuda { display: block; color: #777; font-size: 0.82rem; margin-bottom: 4px; }
+.campo-error { color: var(--rojo); font-size: 0.82rem; margin: 5px 0 0; }
+.req { color: var(--rojo); }
+
+.form-errores {
+    background: #FBEDED;
+    border: 1px solid var(--rojo);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 18px;
+    color: var(--rojo);
+}
+.form-errores p { margin: 0 0 4px; }
+.form-errores p:last-child { margin-bottom: 0; }
+
+.form-acciones { display: flex; gap: 10px; margin-top: 8px; }
+
+/* Confirmación de borrado. */
+.confirmar-eliminar {
+    background: var(--blanco);
+    border: 1px solid var(--gris-borde);
+    border-left: 4px solid var(--rojo);
+    border-radius: 8px;
+    padding: 22px;
+    max-width: 560px;
+}
+.confirmar-nota { color: #777; font-size: 0.9rem; }
+
 /* =========================================================================
    RESPONSIVE
    Escritorio (> 1024px): sidebar fija a la izquierda, contenido a su derecha.
