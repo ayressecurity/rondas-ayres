@@ -29,6 +29,7 @@ MODULO_INSTALACIONES = {
 MODULOS_INSTALACION = [
     {"key": "checkpoints",       "label": "Puntos de control", "url_name": "checkpoints:index",       "roles": [], "grupos": []},
     {"key": "rondas",            "label": "Rondas",            "url_name": "rondas:index",            "roles": [], "grupos": []},
+    {"key": "rondas_escaner",    "label": "Escáner de prueba (QR)", "url_name": "rondas:escaner",     "roles": ["super_admin"], "grupos": []},
     {"key": "novedades",         "label": "Novedades",         "url_name": "novedades:index",         "roles": [], "grupos": []},
     {"key": "control_vehicular", "label": "Control vehicular", "url_name": "control_vehicular:index", "roles": [], "grupos": []},
     {"key": "personas",          "label": "Personas",          "url_name": "personas:index",          "roles": [], "grupos": []},

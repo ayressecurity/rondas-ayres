@@ -603,6 +603,41 @@ body.menu-abierto .menu-toggle span:nth-child(3) { transform: translateY(-7px) r
 .accion-mapa { display: inline-flex; align-items: center; gap: 4px; }
 .icono-mapa { vertical-align: middle; }
 
+/* ---------- Escáner de prueba (QR) ---------- */
+.escaner-wrap { max-width: 480px; }
+.escaner-ayuda { color: #666; margin-bottom: 14px; }
+.escaner-reader {
+    border: 1px solid var(--gris-borde);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #000;
+}
+.escaner-resultado {
+    margin-top: 16px;
+    padding: 14px 16px;
+    border-radius: 8px;
+    font-weight: 600;
+    display: none;   /* oculto hasta que haya un resultado */
+}
+.escaner-resultado.escaner-ok {
+    display: block;
+    background: #e8f5e9;
+    color: #1b5e20;
+    border-left: 4px solid #2e7d32;
+}
+.escaner-resultado.escaner-error {
+    display: block;
+    background: #fdecea;
+    color: #b71c1c;
+    border-left: 4px solid var(--rojo);
+}
+.escaner-resultado.escaner-procesando {
+    display: block;
+    background: #f4f4f4;
+    color: var(--oscuro);
+    border-left: 4px solid var(--oscuro);
+}
+
 /* Confirmación de borrado. */
 .confirmar-eliminar {
     background: var(--blanco);

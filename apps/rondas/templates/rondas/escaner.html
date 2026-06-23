@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+
+{% block titulo %}Escáner de prueba (QR) — Rondas{% endblock %}
+
+{% block contenido %}
+<div class="modulo-cabecera">
+    <div>
+        <h1>Escáner de prueba (QR)</h1>
+        <p class="contexto-instalacion">Herramienta de testeo — solo super administradores.</p>
+    </div>
+</div>
+
+<div class="escaner-wrap">
+    <p class="escaner-ayuda">
+        Apunta la cámara al código QR de un punto de control. Cada lectura válida
+        queda registrada en el libro de novedades. Puedes seguir escaneando sin recargar.
+    </p>
+    <div id="reader" class="escaner-reader"></div>
+    <div id="escanerResultado" class="escaner-resultado" aria-live="polite"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{# Lector de QR por cámara: librería externa permitida SOLO para esto. #}
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+(function () {
+    "use strict";
+
+    var URL_REGISTRAR = "{% url 'rondas:escaner_registrar' %}";
+    var CSRF = "{{ csrf_token }}";
+
+    var resultado = document.getElementById("escanerResultado");
+    var bloqueado = false;   // evita registrar el mismo QR muchas veces seguidas
+
+    // textContent (no innerHTML) para no inyectar HTML del nombre del checkpoint.
+    function pintar(clase, texto) {
+        resultado.className = "escaner-resultado " + clase;
+        resultado.textContent = texto;
+    }
+
+    function registrar(qrToken) {
+        return fetch(URL_REGISTRAR, {
+            method: "POST",
+            headers: {
+                "X-CSRFToken": CSRF,
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
+            body: "qr_token=" + encodeURIComponent(qrToken)
+        }).then(function (r) {
+            return r.json().then(function (data) { return { ok: r.ok, data: data }; });
+        }).then(function (res) {
+            if (res.ok && res.data.ok) {
+                pintar("escaner-ok", "✓ Escaneo registrado: " + res.data.checkpoint + " — " + res.data.hora);
+            } else {
+                pintar("escaner-error", "✕ " + (res.data.error || "No se pudo registrar el escaneo."));
+            }
+        }).catch(function () {
+            pintar("escaner-error", "✕ Error de conexión. Intenta de nuevo.");
+        });
+    }
+
+    function onScan(texto) {
+        if (bloqueado) { return; }
+        bloqueado = true;
+        pintar("escaner-procesando", "Procesando…");
+        registrar((texto || "").trim()).then(function () {
+            // Pequeña pausa para no re-registrar el mismo QR en pantalla.
+            setTimeout(function () { bloqueado = false; }, 2500);
+        });
+    }
+
+    if (typeof Html5QrcodeScanner === "undefined") {
+        pintar("escaner-error", "No se pudo cargar el lector de QR (revisa la conexión).");
+        return;
+    }
+
+    // El scanner pide permiso de cámara y dibuja su propia UI (cámara/archivo).
+    var scanner = new Html5QrcodeScanner(
+        "reader",
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        false
+    );
+    scanner.render(onScan, function () { /* ignora fallos de lectura por frame */ });
+})();
+</script>
+{% endblock %}
