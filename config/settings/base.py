@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     "apps.clientes",
     "apps.instalaciones",
     "apps.checkpoints",
+    "apps.escaner",
     "apps.rondas",
     "apps.novedades",
     "apps.control_vehicular",
