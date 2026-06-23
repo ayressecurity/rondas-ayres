@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block titulo %}{{ titulo }} — Rondas{% endblock %}
+
+{% block contenido %}
+<div class="modulo-cabecera">
+    <div>
+        <h1>{{ titulo }}</h1>
+        <p class="contexto-instalacion">Instalación: <strong>{{ instalacion_nombre }}</strong></p>
+    </div>
+</div>
+
+{% if eventos %}
+<div class="tabla-scroll">
+    <table class="tabla-objetivos">
+        <thead>
+            <tr>
+                <th>Fecha/Hora</th>
+                <th>Tipo de evento</th>
+                <th>Punto de control</th>
+                <th>Guardia</th>
+                <th>Estado</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ev in eventos %}
+                <tr class="fila-objetivo">
+                    {# date: convierte el datetime aware a la zona activa (Santiago), sin decimales. #}
+                    <td data-col="Fecha/Hora">{{ ev.timestamp_evento|date:"Y-m-d H:i:s" }}</td>
+                    <td data-col="Tipo de evento">{{ ev.tipo_evento.nombre }}</td>
+                    <td data-col="Punto de control">{{ ev.punto_control.nombre|default:"—" }}</td>
+                    <td data-col="Guardia">{{ ev.guardia_keycloak_id|default:"—" }}</td>
+                    <td data-col="Estado">{{ ev.get_estado_display }}</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="estado-vacio">
+    <p>Aún no hay eventos registrados en esta instalación.</p>
+</div>
+{% endif %}
+{% endblock %}

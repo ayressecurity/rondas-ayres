@@ -14,6 +14,7 @@ urlpatterns = [
     path("escaner/", include("apps.escaner.urls")),
     path("rondas/", include("apps.rondas.urls")),
     path("novedades/", include("apps.novedades.urls")),
+    path("informes/", include("apps.informes.urls")),
     path("control-vehicular/", include("apps.control_vehicular.urls")),
     path("personas/", include("apps.personas.urls")),
     path("dispositivos/", include("apps.dispositivos.urls")),

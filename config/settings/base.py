@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     "apps.escaner",
     "apps.rondas",
     "apps.novedades",
+    "apps.informes",
     "apps.control_vehicular",
     "apps.personas",
     "apps.dispositivos",
