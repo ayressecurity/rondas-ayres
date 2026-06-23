@@ -21,6 +21,7 @@ TIPOS_BASE = [
     {"codigo": "sesion_fin", "nombre": "Fin de sesión", "categoria": CategoriaEvento.SESION},
     {"codigo": "arribo", "nombre": "Arribo a punto", "categoria": CategoriaEvento.RONDA},
     {"codigo": "arribo_sin_geo", "nombre": "Arribo sin geocerca", "categoria": CategoriaEvento.RONDA},
+    {"codigo": "arribo_invalido", "nombre": "Arribo desde posición inválida", "categoria": CategoriaEvento.RONDA},
     {"codigo": "novedad", "nombre": "Novedad", "categoria": CategoriaEvento.NOVEDAD},
     {"codigo": "codigo_no_existe", "nombre": "Código no existe", "categoria": CategoriaEvento.ERROR},
 ]

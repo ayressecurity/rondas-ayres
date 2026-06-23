@@ -31,7 +31,7 @@
                     <td data-col="Fecha/Hora">{{ ev.timestamp_evento|date:"Y-m-d H:i:s" }}</td>
                     <td data-col="Tipo de evento">{{ ev.tipo_evento.nombre }}</td>
                     <td data-col="Punto de control">{{ ev.punto_control.nombre|default:"—" }}</td>
-                    <td data-col="Guardia">{{ ev.guardia_keycloak_id|default:"—" }}</td>
+                    <td data-col="Guardia">{{ ev.guardia_nombre }}</td>
                     <td data-col="Coordenadas">
                         {% if ev.lat is not None and ev.lng is not None %}
                             {# PENDIENTE: link a Google Maps con API key. Por ahora solo texto. #}

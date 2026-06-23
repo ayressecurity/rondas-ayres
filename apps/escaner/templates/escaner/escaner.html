@@ -136,6 +136,7 @@
                 if (res.ok && res.data.ok) {
                     pintar("escaner-ok",
                         "Punto escaneado: " + res.data.checkpoint + " — " + res.data.hora + detalleGeocerca(res.data));
+                    observacion.value = "";   // limpia la nota: ya quedó registrada
                     mostrarBoton("Escanear otro");
                 } else {
                     pintar("escaner-error", "No se pudo escanear: " + (res.data.error || "Error desconocido."));

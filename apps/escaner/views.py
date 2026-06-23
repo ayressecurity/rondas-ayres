@@ -111,12 +111,18 @@ def registrar(request):
         distancia_m = _haversine_m(lat, lng, float(cp.lat), float(cp.lng))
         distancia_dec = min(Decimal(f"{distancia_m:.2f}"), Decimal("99999.99"))
 
-        if cp.validar_posicion:
-            codigo_tipo = "arribo"
-            dentro_geocerca = distancia_m <= cp.tolerancia_mts
-        else:
+        if not cp.validar_posicion:
+            # Punto sin validación de posición: no se evalúa la geocerca.
             codigo_tipo = "arribo_sin_geo"
-            dentro_geocerca = None  # no se evalúa la geocerca
+            dentro_geocerca = None
+        elif distancia_m <= cp.tolerancia_mts:
+            # Dentro de la tolerancia: arribo válido.
+            codigo_tipo = "arribo"
+            dentro_geocerca = True
+        else:
+            # Fuera de la tolerancia: arribo desde posición inválida.
+            codigo_tipo = "arribo_invalido"
+            dentro_geocerca = False
 
         tipo_evento = TipoEvento.objects.filter(codigo=codigo_tipo).first()
         if tipo_evento is None:
