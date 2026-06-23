@@ -15,9 +15,11 @@ class EstadoGenerico(models.TextChoices):
 
 
 class RepiteRecurrencia(models.TextChoices):
-    DIARIA = "diaria", "Diaria"
-    SEMANAL = "semanal", "Semanal"
-    MENSUAL = "mensual", "Mensual"
+    # Opciones espejo de VigiControl.
+    TODOS_LOS_DIAS = "todos_los_dias", "Todos los días"
+    LUNES_A_VIERNES = "lunes_a_viernes", "Lunes a Viernes"
+    DIAS_SEMANA = "dias_semana", "Días de la semana"
+    UNA_VEZ_AL_MES = "una_vez_al_mes", "Una vez al mes"
 
 
 class DestinoNotificacion(models.TextChoices):
@@ -70,7 +72,7 @@ class RondaGuardia(models.Model):
 
 class Programacion(models.Model):
     ronda = models.ForeignKey("rondas.Ronda", on_delete=models.PROTECT)
-    repite = models.CharField(max_length=10, choices=RepiteRecurrencia.choices)
+    repite = models.CharField(max_length=20, choices=RepiteRecurrencia.choices)
     activo = models.BooleanField(default=True)
 
     class Meta:

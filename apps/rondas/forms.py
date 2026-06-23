@@ -10,7 +10,7 @@ id de otra instalación no valida porque no está en el queryset del campo).
 from django import forms
 
 from apps.checkpoints.models import PuntoControl
-from .models import Ronda
+from .models import Ronda, RepiteRecurrencia
 
 
 class RondaForm(forms.ModelForm):
@@ -38,6 +38,12 @@ class RondaForm(forms.ModelForm):
         label="Modo de orden",
         initial=MODO_ALEATORIO,
     )
+    # Sección 3 — programación (opcional). "" = sin programación.
+    repite = forms.ChoiceField(
+        choices=[("", "Sin programación")] + list(RepiteRecurrencia.choices),
+        required=False,
+        label="Repite",
+    )
 
     class Meta:
         model = Ronda
@@ -47,6 +53,7 @@ class RondaForm(forms.ModelForm):
 
     def __init__(self, *args, instalacion_id=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.horarios = []  # (hora, minuto) válidos; lo llena clean()
         self.fields["nombre"].required = True
 
         qs = PuntoControl.objects.filter(activo=True)
@@ -68,6 +75,44 @@ class RondaForm(forms.ModelForm):
         if not nombre:
             raise forms.ValidationError("El nombre es obligatorio.")
         return nombre
+
+    def clean(self):
+        """Valida los horarios de la Sección 3 (listas hora/minuto del POST).
+
+        Programación opcional: solo se exige ≥1 horario válido si se eligió un
+        "repite". Si no hay repite, se ignoran los horarios (no hay programación).
+        """
+        cleaned = super().clean()
+        repite = cleaned.get("repite") or ""
+
+        # self.data es un QueryDict en peticiones reales (soporta getlist).
+        getlist = getattr(self.data, "getlist", None)
+        horas = getlist("hora") if getlist else []
+        minutos = getlist("minuto") if getlist else []
+
+        horarios = []
+        for h, m in zip(horas, minutos):
+            h, m = (h or "").strip(), (m or "").strip()
+            if h == "" and m == "":
+                continue  # fila vacía: se ignora
+            try:
+                hi, mi = int(h), int(m)
+            except ValueError:
+                self.add_error(None, "Cada horario debe tener hora y minuto numéricos.")
+                continue
+            if not (0 <= hi <= 23):
+                self.add_error(None, f"Hora fuera de rango (0-23): {h}.")
+            elif not (0 <= mi <= 59):
+                self.add_error(None, f"Minuto fuera de rango (0-59): {m}.")
+            else:
+                horarios.append((hi, mi))
+
+        if repite and not horarios:
+            self.add_error(None, "Si defines una programación, agrega al menos un horario válido.")
+
+        # Sin repite -> no hay programación (se descartan horarios).
+        self.horarios = horarios if repite else []
+        return cleaned
 
     @property
     def orden_aleatorio(self):

@@ -14,12 +14,18 @@ import random
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, Exists, OuterRef
 from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.comun.decoradores import requiere_instalacion
 from .forms import RondaForm
-from .models import Ronda, RondaSecuencia, EstadoGenerico
+from .models import (
+    Ronda,
+    RondaSecuencia,
+    Programacion,
+    ProgramacionHorario,
+    EstadoGenerico,
+)
 
 
 def _ronda_de_la_instalacion(request, pk):
@@ -51,6 +57,36 @@ def _guardar_secuencia(ronda, puntos, orden_aleatorio):
     RondaSecuencia.objects.bulk_create(filas)
 
 
+def _guardar_programacion(ronda, repite, horarios):
+    """Reescribe la programación de la ronda.
+
+    Borra la previa (horarios -> programacion, por el PROTECT) y, si hay `repite`,
+    crea una Programacion + una ProgramacionHorario por cada horario. Sin `repite`
+    la ronda queda sin programación.
+    """
+    progs = Programacion.objects.filter(ronda=ronda)
+    ProgramacionHorario.objects.filter(programacion__in=progs).delete()
+    progs.delete()
+    if not repite:
+        return
+    prog = Programacion.objects.create(ronda=ronda, repite=repite, activo=True)
+    ProgramacionHorario.objects.bulk_create(
+        [ProgramacionHorario(programacion=prog, hora=h, minuto=m) for h, m in horarios]
+    )
+
+
+def _horarios_de_post(request):
+    """Pares {hora, minuto} tal como llegaron (para re-pintar si hay error)."""
+    horas = request.POST.getlist("hora")
+    minutos = request.POST.getlist("minuto")
+    filas = []
+    for h, m in zip(horas, minutos):
+        if (h or "").strip() == "" and (m or "").strip() == "":
+            continue
+        filas.append({"hora": h, "minuto": m})
+    return filas
+
+
 @login_required
 @requiere_instalacion
 def index(request):
@@ -58,7 +94,10 @@ def index(request):
     rondas = (
         Ronda.objects
         .filter(instalacion_id=request.session["instalacion_id"], estado=EstadoGenerico.ACTIVA)
-        .annotate(num_checkpoints=Count("rondasecuencia"))
+        .annotate(
+            num_checkpoints=Count("rondasecuencia", distinct=True),
+            tiene_prog=Exists(Programacion.objects.filter(ronda=OuterRef("pk"), activo=True)),
+        )
         .order_by("-creado_en")
     )
     return render(request, "rondas/index.html", {"rondas": rondas})
@@ -67,10 +106,11 @@ def index(request):
 @login_required
 @requiere_instalacion
 def nueva(request):
-    """Alta de una ronda + su secuencia de checkpoints."""
+    """Alta de una ronda + su secuencia de checkpoints + programación (opcional)."""
     instalacion_id = request.session["instalacion_id"]
     if request.method == "POST":
         form = RondaForm(request.POST, instalacion_id=instalacion_id)
+        horarios = _horarios_de_post(request)
         if form.is_valid():
             with transaction.atomic():
                 ronda = form.save(commit=False)
@@ -80,32 +120,48 @@ def nueva(request):
                 ronda.estado = EstadoGenerico.ACTIVA
                 ronda.save()
                 _guardar_secuencia(ronda, form.cleaned_data["puntos"], form.orden_aleatorio)
+                _guardar_programacion(ronda, form.cleaned_data.get("repite"), form.horarios)
             messages.success(request, f"Ronda «{ronda.nombre}» creada.")
             return redirect("rondas:index")
     else:
         form = RondaForm(instalacion_id=instalacion_id)
-    return render(request, "rondas/form.html", {"form": form, "modo": "nueva"})
+        horarios = []
+    return render(request, "rondas/form.html", {"form": form, "modo": "nueva", "horarios": horarios})
 
 
 @login_required
 @requiere_instalacion
 def editar(request, pk):
-    """Edita una ronda y reescribe su secuencia de checkpoints."""
+    """Edita una ronda y reescribe su secuencia de checkpoints y su programación."""
     ronda = _ronda_de_la_instalacion(request, pk)
     instalacion_id = request.session["instalacion_id"]
     if request.method == "POST":
         form = RondaForm(request.POST, instance=ronda, instalacion_id=instalacion_id)
+        horarios = _horarios_de_post(request)
         if form.is_valid():
             with transaction.atomic():
                 ronda = form.save(commit=False)
                 ronda.orden_aleatorio = form.orden_aleatorio
                 ronda.save()
                 _guardar_secuencia(ronda, form.cleaned_data["puntos"], form.orden_aleatorio)
+                _guardar_programacion(ronda, form.cleaned_data.get("repite"), form.horarios)
             messages.success(request, f"Ronda «{ronda.nombre}» actualizada.")
             return redirect("rondas:index")
     else:
-        form = RondaForm(instance=ronda, instalacion_id=instalacion_id)
-    return render(request, "rondas/form.html", {"form": form, "modo": "editar", "ronda": ronda})
+        # Cargar la programación existente para precargar repite + horarios.
+        prog = Programacion.objects.filter(ronda=ronda, activo=True).first()
+        form = RondaForm(
+            instance=ronda,
+            instalacion_id=instalacion_id,
+            initial={"repite": prog.repite if prog else ""},
+        )
+        horarios = []
+        if prog:
+            horarios = [
+                {"hora": ph.hora, "minuto": ph.minuto}
+                for ph in ProgramacionHorario.objects.filter(programacion=prog).order_by("hora", "minuto")
+            ]
+    return render(request, "rondas/form.html", {"form": form, "modo": "editar", "ronda": ronda, "horarios": horarios})
 
 
 @login_required

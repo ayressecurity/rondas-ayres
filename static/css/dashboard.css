@@ -474,6 +474,7 @@ body.menu-abierto .menu-toggle span:nth-child(3) { transform: translateY(-7px) r
 .campo-form input[type="text"],
 .campo-form input[type="number"],
 .campo-form input[type="file"],
+.campo-form select,
 .campo-form textarea {
     width: 100%;
     padding: 9px 11px;
@@ -484,12 +485,22 @@ body.menu-abierto .menu-toggle span:nth-child(3) { transform: translateY(-7px) r
     background: var(--blanco);
 }
 .campo-form input:focus,
+.campo-form select:focus,
 .campo-form textarea:focus {
     outline: none;
     border-color: var(--rojo);
     box-shadow: 0 0 0 2px #FBEDED;
 }
 .campo-form textarea { resize: vertical; }
+
+/* Horarios de la programación: filas hora:minuto agregables/quitables. */
+.horario-fila { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.campo-form .input-hm {
+    width: 84px;          /* angosto: anula el 100% de inputs number */
+    text-align: center;
+}
+.btn-quitar { padding: 6px 12px; }
+.btn-add-horario { margin-top: 4px; }
 .campo-fila { display: flex; gap: 16px; flex-wrap: wrap; }
 .campo-fila .campo-form { flex: 1 1 180px; }
 .campo-check label { display: flex; align-items: center; gap: 8px; font-weight: 600; }

@@ -64,9 +64,75 @@
         {% for error in form.modo_orden.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
     </div>
 
+    {# ---------- SECCIÓN 3 — Programación (opcional) ---------- #}
+    <h2 class="form-seccion">Programación de alertas</h2>
+    <p class="campo-ayuda">Opcional. Si eliges una recurrencia, agrega al menos un horario.
+    (El disparo de alertas es trabajo futuro; aquí solo se configura.)</p>
+
+    <div class="campo-form">
+        <label for="{{ form.repite.id_for_label }}">{{ form.repite.label }}</label>
+        {{ form.repite }}
+        {% for error in form.repite.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+    </div>
+
+    <div class="campo-form">
+        <label>Horarios (hora : minuto)</label>
+        <div id="horarios">
+            {% for h in horarios %}
+                <div class="horario-fila">
+                    <input type="number" name="hora" min="0" max="23" placeholder="HH" class="input-hm" value="{{ h.hora }}">
+                    <span>:</span>
+                    <input type="number" name="minuto" min="0" max="59" placeholder="MM" class="input-hm" value="{{ h.minuto }}">
+                    <button type="button" class="btn btn-secundario btn-quitar">Quitar</button>
+                </div>
+            {% empty %}
+                <div class="horario-fila">
+                    <input type="number" name="hora" min="0" max="23" placeholder="HH" class="input-hm">
+                    <span>:</span>
+                    <input type="number" name="minuto" min="0" max="59" placeholder="MM" class="input-hm">
+                    <button type="button" class="btn btn-secundario btn-quitar">Quitar</button>
+                </div>
+            {% endfor %}
+        </div>
+        <button type="button" id="addHorario" class="btn btn-secundario btn-add-horario">+ Agregar horario</button>
+    </div>
+
     <div class="form-acciones">
         <button type="submit" class="btn btn-primario">Guardar</button>
         <a href="{% url 'rondas:index' %}" class="btn btn-secundario">Cancelar</a>
     </div>
 </form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    "use strict";
+    var cont = document.getElementById("horarios");
+    var btnAdd = document.getElementById("addHorario");
+    if (!cont || !btnAdd) { return; }
+
+    function nuevaFila() {
+        var fila = document.createElement("div");
+        fila.className = "horario-fila";
+        fila.innerHTML =
+            '<input type="number" name="hora" min="0" max="23" placeholder="HH" class="input-hm">' +
+            '<span>:</span>' +
+            '<input type="number" name="minuto" min="0" max="59" placeholder="MM" class="input-hm">' +
+            '<button type="button" class="btn btn-secundario btn-quitar">Quitar</button>';
+        return fila;
+    }
+
+    btnAdd.addEventListener("click", function () {
+        cont.appendChild(nuevaFila());
+    });
+
+    // Quitar fila (delegación). Permite dejar 0 filas = sin programación.
+    cont.addEventListener("click", function (e) {
+        if (e.target.classList.contains("btn-quitar")) {
+            e.target.closest(".horario-fila").remove();
+        }
+    });
+})();
+</script>
 {% endblock %}

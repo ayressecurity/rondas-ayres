@@ -23,6 +23,7 @@
                 <th>Fecha de inicio</th>
                 <th>Estado</th>
                 <th>N° de checkpoints</th>
+                <th>Programada</th>
                 <th>Acciones</th>
             </tr>
         </thead>
@@ -33,6 +34,7 @@
                     <td data-col="Fecha de inicio">{{ ronda.fecha_inicio|date:"Y-m-d" }}</td>
                     <td data-col="Estado">{{ ronda.get_estado_display }}</td>
                     <td data-col="N° de checkpoints">{{ ronda.num_checkpoints }}</td>
+                    <td data-col="Programada">{% if ronda.tiene_prog %}Sí{% else %}No{% endif %}</td>
                     <td data-col="Acciones" class="col-accion">
                         <a href="{% url 'rondas:editar' ronda.id %}" class="accion-link">Editar</a>
                         <a href="{% url 'rondas:eliminar' ronda.id %}" class="accion-link accion-peligro">Eliminar</a>
