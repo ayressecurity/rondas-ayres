@@ -118,23 +118,6 @@ def qr(request, pk):
 
 @login_required
 @requiere_instalacion
-def mapa(request, pk):
-    """
-    Mini-página que embebe Google Maps centrado EXACTAMENTE en la lat/lng del
-    punto de control. Se carga dentro de un iframe en el modal de la lista.
-    El backend arma la URL leyendo lat/lng de la BD, así la posición mostrada
-    coincide siempre con la del QR (la fuente es la misma fila). 404 si el punto
-    es de otra instalacion.
-    """
-    cp = _checkpoint_de_la_instalacion(request, pk)
-    # Coordenadas con punto decimal e independientes del locale (la plantilla
-    # las interpola directo en la URL de Google Maps).
-    src = f"https://maps.google.com/maps?q={cp.lat},{cp.lng}&z=17&hl=es&output=embed"
-    return render(request, "checkpoints/mapa.html", {"cp": cp, "src": src})
-
-
-@login_required
-@requiere_instalacion
 def eliminar(request, pk):
     """Soft delete (activo=False), con confirmacion previa."""
     cp = _checkpoint_de_la_instalacion(request, pk)

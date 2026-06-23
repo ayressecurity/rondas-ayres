@@ -34,8 +34,10 @@
                     <td data-col="Guardia">{{ ev.guardia_nombre }}</td>
                     <td data-col="Coordenadas">
                         {% if ev.lat is not None and ev.lng is not None %}
-                            {# PENDIENTE: link a Google Maps con API key. Por ahora solo texto. #}
-                            {{ ev.lat }}, {{ ev.lng }}
+                            {# stringformat:'s' = str del Decimal: punto decimal y precisión completa (sin localizar). #}
+                            {# PENDIENTE: a futuro, mapa embebido con Google Maps API key (por ahora solo link). #}
+                            <a href="https://www.google.com/maps?q={{ ev.lat|stringformat:'s' }},{{ ev.lng|stringformat:'s' }}"
+                               class="accion-link" target="_blank" rel="noopener">Ver mapa</a>
                         {% else %}—{% endif %}
                     </td>
                     <td data-col="Distancia">
