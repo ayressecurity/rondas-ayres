@@ -12,10 +12,17 @@
 
 <div class="escaner-wrap">
     <p class="escaner-ayuda">
-        Apunta la cámara al código QR de un punto de control. Una lectura válida
-        queda registrada en el libro de novedades y detiene la cámara; usa el botón
-        para escanear otro.
+        Apunta la cámara al código QR de un punto de control. <strong>Debes permitir
+        la ubicación</strong>: se registra con el GPS del celular para validar la
+        geocerca. Una lectura válida queda registrada y detiene la cámara.
     </p>
+
+    <div class="campo-form">
+        <label for="campoObservacion">Observación (opcional)</label>
+        <textarea id="campoObservacion" rows="2" maxlength="1000"
+                  placeholder="Nota opcional para este escaneo"></textarea>
+    </div>
+
     <div id="reader" class="escaner-reader"></div>
     <div id="escanerResultado" class="escaner-resultado" aria-live="polite"></div>
     <div class="form-acciones">
@@ -36,6 +43,7 @@
 
     var resultado = document.getElementById("escanerResultado");
     var btn = document.getElementById("btnReiniciar");
+    var observacion = document.getElementById("campoObservacion");
     var scanner = null;
     var procesando = false;   // evita ráfagas: una lectura a la vez
 
@@ -71,43 +79,72 @@
         scanner.render(onScan, function () { /* ignora fallos de lectura por frame */ });
     }
 
-    // Muestra el botón con la etiqueta según el caso (éxito vs reintento).
     function mostrarBoton(etiqueta) {
         btn.textContent = etiqueta;
         btn.hidden = false;
     }
 
-    function registrar(qrToken) {
+    // Promesa con la ubicación actual; rechaza si no hay permiso/soporte/timeout.
+    function obtenerUbicacion() {
+        return new Promise(function (resolve, reject) {
+            if (!navigator.geolocation) { reject(); return; }
+            navigator.geolocation.getCurrentPosition(
+                function (pos) { resolve(pos.coords); },
+                function () { reject(); },
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+            );
+        });
+    }
+
+    function registrar(qrToken, coords) {
+        var cuerpo = "qr_token=" + encodeURIComponent(qrToken) +
+                     "&lat=" + encodeURIComponent(coords.latitude) +
+                     "&lng=" + encodeURIComponent(coords.longitude) +
+                     "&texto=" + encodeURIComponent((observacion.value || "").trim());
         return fetch(URL_REGISTRAR, {
             method: "POST",
             headers: {
                 "X-CSRFToken": CSRF,
                 "Content-Type": "application/x-www-form-urlencoded"
             },
-            body: "qr_token=" + encodeURIComponent(qrToken)
+            body: cuerpo
         }).then(function (r) {
             return r.json().then(function (data) { return { ok: r.ok, data: data }; });
         });
+    }
+
+    // Texto on-brand sobre la geocerca según la respuesta del backend.
+    function detalleGeocerca(data) {
+        if (data.distancia_metros === null || data.distancia_metros === undefined) { return ""; }
+        var metros = Math.round(data.distancia_metros) + " m";
+        if (data.dentro_geocerca === true) { return " — dentro de la geocerca (" + metros + ")"; }
+        if (data.dentro_geocerca === false) { return " — FUERA de la geocerca (" + metros + ")"; }
+        return " — sin validación de geocerca (" + metros + ")";  // null
     }
 
     function onScan(texto) {
         if (procesando) { return; }     // ignora lecturas en ráfaga
         procesando = true;
         detener();                       // corta la cámara apenas hay una lectura
-        pintar("escaner-procesando", "Procesando…");
+        pintar("escaner-procesando", "Obteniendo ubicación…");
 
-        registrar((texto || "").trim()).then(function (res) {
-            if (res.ok && res.data.ok) {
-                // ÉXITO: cámara ya detenida; mostramos punto + hora y "Escanear otro".
-                pintar("escaner-ok", "Punto escaneado: " + res.data.checkpoint + " — " + res.data.hora);
-                mostrarBoton("Escanear otro");
-            } else {
-                // FALLO: motivo claro y permitir reintentar sin recargar.
-                pintar("escaner-error", "No se pudo escanear: " + (res.data.error || "Error desconocido."));
-                mostrarBoton("Reintentar");
-            }
+        var qrToken = (texto || "").trim();
+
+        obtenerUbicacion().then(function (coords) {
+            pintar("escaner-procesando", "Registrando…");
+            return registrar(qrToken, coords).then(function (res) {
+                if (res.ok && res.data.ok) {
+                    pintar("escaner-ok",
+                        "Punto escaneado: " + res.data.checkpoint + " — " + res.data.hora + detalleGeocerca(res.data));
+                    mostrarBoton("Escanear otro");
+                } else {
+                    pintar("escaner-error", "No se pudo escanear: " + (res.data.error || "Error desconocido."));
+                    mostrarBoton("Reintentar");
+                }
+            });
         }).catch(function () {
-            pintar("escaner-error", "No se pudo escanear: error de conexión.");
+            // Sin ubicación NO se registra nada (el GPS es obligatorio).
+            pintar("escaner-error", "Debes permitir la ubicación para registrar el punto.");
             mostrarBoton("Reintentar");
         });
     }
@@ -118,6 +155,10 @@
         pintar("escaner-error", "No se pudo cargar el lector de QR (revisa la conexión).");
         return;
     }
+
+    // Pide permiso de ubicación al entrar (junto con la cámara) para no demorar
+    // el primer escaneo; el resultado real se toma al momento de leer el QR.
+    obtenerUbicacion().then(function () {}).catch(function () {});
 
     iniciar();
 })();
