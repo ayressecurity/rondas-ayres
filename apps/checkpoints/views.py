@@ -7,11 +7,15 @@ Seguridad: cada vista de detalle (editar/eliminar) verifica que el punto de
 control pertenezca a la instalacion de la sesion (si no, 404). instalacion_id y
 qr_token NUNCA vienen del formulario: los fija la vista.
 """
+from io import BytesIO
 from uuid import uuid4
+
+import qrcode
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.files.storage import default_storage
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.comun.decoradores import requiere_instalacion
@@ -90,6 +94,24 @@ def editar(request, pk):
     else:
         form = PuntoControlForm(instance=cp, initial={"no_validar": not cp.validar_posicion})
     return render(request, "checkpoints/form.html", {"form": form, "modo": "editar", "cp": cp})
+
+
+@login_required
+@requiere_instalacion
+def qr(request, pk):
+    """
+    Genera al vuelo el PNG del QR del punto de control. El contenido del QR es
+    EXACTAMENTE el qr_token (solo el token; sin URLs ni ids internos), que es lo
+    que escanea la app móvil. ?descargar=1 fuerza la descarga del archivo.
+    """
+    cp = _checkpoint_de_la_instalacion(request, pk)  # 404 si es de otra instalacion
+    img = qrcode.make(cp.qr_token)
+    buffer = BytesIO()
+    img.save(buffer, format="PNG")
+    response = HttpResponse(buffer.getvalue(), content_type="image/png")
+    if request.GET.get("descargar"):
+        response["Content-Disposition"] = f'attachment; filename="qr-checkpoint-{cp.id}.png"'
+    return response
 
 
 @login_required

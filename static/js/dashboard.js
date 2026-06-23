@@ -66,6 +66,47 @@
     });
 })();
 
+// Modal de QR (checkpoints): muestra el PNG sin salir de la lista.
+// Si no hay JS, el enlace abre el PNG en una pestaña (target="_blank").
+(function () {
+    "use strict";
+
+    var modal = document.getElementById("qrModal");
+    if (!modal) { return; }
+
+    var img = document.getElementById("qrModalImg");
+    var nombre = document.getElementById("qrModalNombre");
+    var descargar = document.getElementById("qrModalDescargar");
+    var enlaces = document.querySelectorAll(".accion-qr");
+
+    function abrir(url, nombreCp) {
+        img.src = url;
+        nombre.textContent = nombreCp || "";
+        descargar.href = url + (url.indexOf("?") === -1 ? "?" : "&") + "descargar=1";
+        modal.hidden = false;
+    }
+
+    function cerrar() {
+        modal.hidden = true;
+        img.src = "";
+    }
+
+    enlaces.forEach(function (a) {
+        a.addEventListener("click", function (e) {
+            e.preventDefault();
+            abrir(a.getAttribute("data-qr-url"), a.getAttribute("data-qr-nombre"));
+        });
+    });
+
+    modal.addEventListener("click", function (e) {
+        if (e.target.hasAttribute("data-qr-cerrar")) { cerrar(); }
+    });
+
+    document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && !modal.hidden) { cerrar(); }
+    });
+})();
+
 // Tabla "Objetivos": seleccionar instalación haciendo clic en la fila.
 (function () {
     "use strict";
