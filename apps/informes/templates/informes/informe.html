@@ -19,7 +19,9 @@
                 <th>Tipo de evento</th>
                 <th>Punto de control</th>
                 <th>Guardia</th>
-                <th>Estado</th>
+                <th>Coordenadas</th>
+                <th>Distancia</th>
+                <th>Observación</th>
             </tr>
         </thead>
         <tbody>
@@ -30,7 +32,24 @@
                     <td data-col="Tipo de evento">{{ ev.tipo_evento.nombre }}</td>
                     <td data-col="Punto de control">{{ ev.punto_control.nombre|default:"—" }}</td>
                     <td data-col="Guardia">{{ ev.guardia_keycloak_id|default:"—" }}</td>
-                    <td data-col="Estado">{{ ev.get_estado_display }}</td>
+                    <td data-col="Coordenadas">
+                        {% if ev.lat is not None and ev.lng is not None %}
+                            {# PENDIENTE: link a Google Maps con API key. Por ahora solo texto. #}
+                            {{ ev.lat }}, {{ ev.lng }}
+                        {% else %}—{% endif %}
+                    </td>
+                    <td data-col="Distancia">
+                        {% if ev.distancia_metros is not None %}
+                            {% if ev.dentro_geocerca is True %}
+                                <span class="geo-ok">{{ ev.distancia_metros }} m ✓</span>
+                            {% elif ev.dentro_geocerca is False %}
+                                <span class="geo-fuera">{{ ev.distancia_metros }} m ⚠</span>
+                            {% else %}
+                                {{ ev.distancia_metros }} m
+                            {% endif %}
+                        {% else %}—{% endif %}
+                    </td>
+                    <td data-col="Observación">{{ ev.texto|default:"—" }}</td>
                 </tr>
             {% endfor %}
         </tbody>

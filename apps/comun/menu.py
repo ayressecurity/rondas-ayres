@@ -28,7 +28,7 @@ MODULO_INSTALACIONES = {
 # Solo con INSTALACION seleccionada (operan dentro de ella).
 MODULOS_INSTALACION = [
     {"key": "checkpoints",       "label": "Puntos de control", "url_name": "checkpoints:index",       "roles": [], "grupos": []},
-    {"key": "rondas",            "label": "Rondas",            "url_name": "rondas:index",            "roles": [], "grupos": []},
+    # "Rondas" ya no va en el sidebar: se accede con un botón en Puntos de control.
     {"key": "escaner",           "label": "Escáner de prueba (QR)", "url_name": "escaner:index",      "roles": ["super_admin"], "grupos": []},
     {"key": "informe_rondas",    "label": "Informe de Rondas", "url_name": "informes:rondas",         "roles": [], "grupos": []},
     {"key": "informe_novedades", "label": "Informe de Novedades", "url_name": "informes:novedades",   "roles": [], "grupos": []},

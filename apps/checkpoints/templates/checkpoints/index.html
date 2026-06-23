@@ -8,7 +8,11 @@
         <h1>Puntos de control</h1>
         <p class="contexto-instalacion">Instalación: <strong>{{ instalacion_nombre }}</strong></p>
     </div>
-    <a href="{% url 'checkpoints:nuevo' %}" class="btn btn-primario">Nuevo checkpoint</a>
+    <div class="cabecera-acciones">
+        <a href="{% url 'checkpoints:nuevo' %}" class="btn btn-primario">Nuevo checkpoint</a>
+        {# Acceso a Rondas (programación de rondas se construirá después). #}
+        <a href="{% url 'rondas:index' %}" class="btn btn-secundario">Rondas</a>
+    </div>
 </div>
 
 {% if checkpoints %}

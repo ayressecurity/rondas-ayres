@@ -415,6 +415,7 @@ body.menu-abierto .menu-toggle span:nth-child(3) { transform: translateY(-7px) r
     margin-bottom: 18px;
 }
 .modulo-cabecera h1 { margin-bottom: 2px; }
+.cabecera-acciones { display: flex; gap: 10px; flex-wrap: wrap; }
 
 /* Estado vacío on-brand (sin registros que mostrar). */
 .estado-vacio {
@@ -637,6 +638,10 @@ body.menu-abierto .menu-toggle span:nth-child(3) { transform: translateY(-7px) r
     color: var(--oscuro);
     border-left: 4px solid var(--oscuro);
 }
+
+/* Indicador de geocerca en el Informe de Rondas. */
+.geo-ok { color: #2e7d32; font-weight: 600; white-space: nowrap; }
+.geo-fuera { color: var(--rojo); font-weight: 600; white-space: nowrap; }
 
 /* Confirmación de borrado. */
 .confirmar-eliminar {
