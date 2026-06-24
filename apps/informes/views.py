@@ -217,12 +217,17 @@ def exportar_novedades(request):
         celda.font = fuente
         celda.alignment = centrado
         ws.column_dimensions[get_column_letter(col)].width = ancho
-    celda_img = ws.cell(row=2, column=base_cols + 1, value="Imágenes")
-    celda_img.fill = relleno
-    celda_img.font = fuente
-    celda_img.alignment = centrado
+    # Encabezado de imágenes: la banda roja cubre TODAS las columnas de imágenes
+    # (la novedad con más fotos define el ancho), no solo la primera.
     for c in range(base_cols + 1, total_cols + 1):
+        celda = ws.cell(row=2, column=c)
+        celda.fill = relleno
+        celda.font = fuente
+        celda.alignment = centrado
         ws.column_dimensions[get_column_letter(c)].width = COL_IMG_ANCHO
+    ws.cell(row=2, column=base_cols + 1, value="Imágenes")
+    if total_cols > base_cols + 1:
+        ws.merge_cells(start_row=2, start_column=base_cols + 1, end_row=2, end_column=total_cols)
 
     # Datos.
     fila = 3

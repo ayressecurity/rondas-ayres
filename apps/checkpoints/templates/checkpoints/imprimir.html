@@ -62,12 +62,12 @@
             break-inside: avoid;
         }
         .celda img {
-            width: 45mm;
-            height: 45mm;
+            width: 35mm;                  /* ~1 cm más chico que antes (45 -> 35) */
+            height: 35mm;
             image-rendering: pixelated;   /* QR nítido, sin difuminar al escalar */
         }
         .celda .nombre {
-            margin-top: 4mm;
+            margin-bottom: 3mm;           /* nombre ARRIBA del QR */
             font-weight: 600;
             font-size: 0.95rem;
             word-break: break-word;
@@ -99,8 +99,8 @@
         <section class="hoja">
             {% for item in pagina %}
                 <div class="celda">
-                    <img src="{{ item.qr }}" alt="QR {{ item.nombre }}">
                     <span class="nombre">{{ item.nombre }}</span>
+                    <img src="{{ item.qr }}" alt="QR {{ item.nombre }}">
                 </div>
             {% endfor %}
         </section>
