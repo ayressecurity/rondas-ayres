@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+
+{% block titulo %}Configurar QR — Rondas{% endblock %}
+
+{% block contenido %}
+<div class="modulo-cabecera">
+    <div>
+        <h1>Configurar QR</h1>
+        <p class="contexto-instalacion">Instalación: <strong>{{ instalacion_nombre }}</strong> — solo super administradores.</p>
+    </div>
+</div>
+
+<div class="escaner-wrap">
+    {# Paso 1: escanear #}
+    <div id="pasoEscaneo">
+        <p class="escaner-ayuda">Párate en el punto, permite la <strong>ubicación</strong> y escanea su código QR
+        para grabarle la posición real del teléfono.</p>
+        <div id="reader" class="escaner-reader"></div>
+    </div>
+
+    {# Paso 2: formulario de configuración (se muestra al escanear un QR válido) #}
+    <form id="configForm" class="form-tarjeta" hidden>
+        <p class="config-punto">Punto: <strong id="cfgNombre"></strong></p>
+
+        <div class="campo-fila">
+            <div class="campo-form">
+                <label for="cfgLat">Latitud (teléfono)</label>
+                <input type="text" id="cfgLat" readonly>
+            </div>
+            <div class="campo-form">
+                <label for="cfgLng">Longitud (teléfono)</label>
+                <input type="text" id="cfgLng" readonly>
+            </div>
+        </div>
+
+        <div class="campo-form campo-check">
+            <label><input type="checkbox" id="cfgNoValidar"> No validar posición de arribo</label>
+            <small class="campo-ayuda">Si se marca, el arribo a este punto no exige estar dentro de la geocerca.</small>
+        </div>
+
+        <div class="campo-form">
+            <label for="cfgTolerancia">Tolerancia (mts)</label>
+            <input type="number" id="cfgTolerancia" min="0" step="1" value="30">
+        </div>
+
+        <div class="form-acciones">
+            <button type="submit" class="btn btn-primario">Guardar configuración</button>
+            <button type="button" id="btnCancelar" class="btn btn-secundario">Cancelar</button>
+        </div>
+    </form>
+
+    <div id="cfgResultado" class="escaner-resultado" aria-live="polite"></div>
+    <div class="form-acciones">
+        <button type="button" id="btnOtro" class="btn btn-primario" hidden>Configurar otro</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+(function () {
+    "use strict";
+
+    var URL_BUSCAR = "{% url 'checkpoints:configurar_qr_buscar' %}";
+    var URL_GUARDAR = "{% url 'checkpoints:configurar_qr_guardar' %}";
+    var CSRF = "{{ csrf_token }}";
+
+    var pasoEscaneo = document.getElementById("pasoEscaneo");
+    var form = document.getElementById("configForm");
+    var resultado = document.getElementById("cfgResultado");
+    var btnOtro = document.getElementById("btnOtro");
+    var btnCancelar = document.getElementById("btnCancelar");
+
+    var cfgNombre = document.getElementById("cfgNombre");
+    var cfgLat = document.getElementById("cfgLat");
+    var cfgLng = document.getElementById("cfgLng");
+    var cfgNoValidar = document.getElementById("cfgNoValidar");
+    var cfgTolerancia = document.getElementById("cfgTolerancia");
+
+    var scanner = null;
+    var procesando = false;
+    var tokenActual = null;
+
+    function pintar(clase, texto) {
+        resultado.className = "escaner-resultado " + clase;
+        resultado.textContent = texto;
+    }
+    function limpiarResultado() { resultado.className = "escaner-resultado"; resultado.textContent = ""; }
+
+    function detener() {
+        if (scanner) { scanner.clear().catch(function () {}); scanner = null; }
+    }
+
+    function iniciarCamara() {
+        limpiarResultado();
+        form.hidden = true;
+        btnOtro.hidden = true;
+        pasoEscaneo.hidden = false;
+        procesando = false;
+        tokenActual = null;
+        scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: { width: 250, height: 250 } }, false);
+        scanner.render(onScan, function () {});
+    }
+
+    function obtenerUbicacion() {
+        return new Promise(function (resolve, reject) {
+            if (!navigator.geolocation) { reject(); return; }
+            navigator.geolocation.getCurrentPosition(
+                function (pos) { resolve(pos.coords); },
+                function () { reject(); },
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+            );
+        });
+    }
+
+    function onScan(texto) {
+        if (procesando) { return; }
+        procesando = true;
+        detener();
+        pintar("escaner-procesando", "Obteniendo ubicación…");
+        var qr = (texto || "").trim();
+
+        obtenerUbicacion().then(function (coords) {
+            // Coordenadas del teléfono con TODOS los decimales (sin truncar).
+            cfgLat.value = String(coords.latitude);
+            cfgLng.value = String(coords.longitude);
+            return buscar(qr);
+        }).then(function (res) {
+            if (res.ok && res.data.ok) {
+                tokenActual = qr;
+                cfgNombre.textContent = res.data.nombre;
+                cfgTolerancia.value = res.data.tolerancia_mts;
+                cfgNoValidar.checked = !res.data.validar_posicion;
+                limpiarResultado();
+                pasoEscaneo.hidden = true;
+                form.hidden = false;
+            } else {
+                pintar("escaner-error", res.data.error || "No se pudo leer el QR.");
+                btnOtro.textContent = "Reintentar";
+                btnOtro.hidden = false;
+            }
+        }).catch(function () {
+            pintar("escaner-error", "Debes permitir la ubicación para configurar el punto.");
+            btnOtro.textContent = "Reintentar";
+            btnOtro.hidden = false;
+        });
+    }
+
+    function buscar(qr) {
+        return fetch(URL_BUSCAR, {
+            method: "POST",
+            headers: { "X-CSRFToken": CSRF, "Content-Type": "application/x-www-form-urlencoded" },
+            body: "qr_token=" + encodeURIComponent(qr)
+        }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); });
+    }
+
+    form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var cuerpo = "qr_token=" + encodeURIComponent(tokenActual) +
+                     "&lat=" + encodeURIComponent(cfgLat.value) +
+                     "&lng=" + encodeURIComponent(cfgLng.value) +
+                     "&tolerancia_mts=" + encodeURIComponent(cfgTolerancia.value) +
+                     "&no_validar=" + (cfgNoValidar.checked ? "1" : "0");
+        fetch(URL_GUARDAR, {
+            method: "POST",
+            headers: { "X-CSRFToken": CSRF, "Content-Type": "application/x-www-form-urlencoded" },
+            body: cuerpo
+        }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+          .then(function (res) {
+            if (res.ok && res.data.ok) {
+                form.hidden = true;
+                pintar("escaner-ok", "QR configurado: " + res.data.nombre + " — coordenadas actualizadas.");
+                btnOtro.textContent = "Configurar otro";
+                btnOtro.hidden = false;
+            } else {
+                pintar("escaner-error", res.data.error || "No se pudo guardar.");
+            }
+        }).catch(function () {
+            pintar("escaner-error", "Error de conexión al guardar.");
+        });
+    });
+
+    btnCancelar.addEventListener("click", iniciarCamara);
+    btnOtro.addEventListener("click", iniciarCamara);
+
+    if (typeof Html5QrcodeScanner === "undefined") {
+        pintar("escaner-error", "No se pudo cargar el lector de QR (revisa la conexión).");
+        return;
+    }
+
+    // Pide permiso de ubicación al entrar; el valor real se toma al escanear.
+    obtenerUbicacion().then(function () {}).catch(function () {});
+    iniciarCamara();
+})();
+</script>
+{% endblock %}

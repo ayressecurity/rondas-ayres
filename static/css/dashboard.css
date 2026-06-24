@@ -719,6 +719,9 @@ button.accion-imagen {
     justify-content: center;
 }
 
+/* "Configurar QR": nombre del punto sobre el formulario. */
+.config-punto { margin: 0 0 12px; font-size: 1.05rem; }
+
 /* ===== Responsividad de las pantallas con cámara ===== */
 /* Centra los contenedores de cámara en escritorio. */
 .escaner-wrap, .camara-form { margin-left: auto; margin-right: auto; }

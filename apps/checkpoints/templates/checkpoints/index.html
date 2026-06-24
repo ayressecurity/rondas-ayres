@@ -13,6 +13,9 @@
         {# Acceso a Rondas (programación de rondas se construirá después). #}
         <a href="{% url 'rondas:index' %}" class="btn btn-secundario">Rondas</a>
         <a href="{% url 'checkpoints:imprimir' %}" class="btn btn-secundario" target="_blank" rel="noopener">Imprimir QR</a>
+        {% if es_super_admin %}
+            <a href="{% url 'checkpoints:configurar_qr' %}" class="btn btn-secundario">Configurar QR</a>
+        {% endif %}
     </div>
 </div>
 
