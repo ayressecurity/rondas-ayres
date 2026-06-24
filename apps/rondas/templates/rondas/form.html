@@ -34,6 +34,20 @@
         {% for error in form.fecha_inicio.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
     </div>
 
+    <div class="campo-fila">
+        <div class="campo-form">
+            <label for="{{ form.hora_inicio.id_for_label }}">{{ form.hora_inicio.label }} <span class="req">*</span></label>
+            {{ form.hora_inicio }}
+            {% for error in form.hora_inicio.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+        </div>
+        <div class="campo-form">
+            <label for="{{ form.hora_fin.id_for_label }}">{{ form.hora_fin.label }} <span class="req">*</span></label>
+            {{ form.hora_fin }}
+            {% for error in form.hora_fin.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+        </div>
+    </div>
+    <p class="campo-ayuda">Turno en que la ronda está activa. Si cruza medianoche, pon inicio &gt; fin (ej. 19:00 → 07:00).</p>
+
     {# ---------- SECCIÓN 2 — Checkpoints ---------- #}
     <h2 class="form-seccion">Checkpoints de la ronda</h2>
 

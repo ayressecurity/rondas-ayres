@@ -10,21 +10,11 @@
     </div>
 </div>
 
-{# ---------- FASE 1: elegir ronda ---------- #}
+{# ---------- FASE 1: iniciar (el servidor elige la ronda por la hora) ---------- #}
 <div id="faseSeleccion" class="escaner-wrap">
-    {% if rondas %}
-        <p class="escaner-ayuda">Elige la ronda a ejecutar:</p>
-        <div class="rondas-elegir">
-            {% for r in rondas %}
-                <button type="button" class="btn btn-primario btn-ronda" data-ronda-id="{{ r.id }}">{{ r.nombre }}</button>
-            {% endfor %}
-        </div>
-    {% else %}
-        <div class="estado-vacio">
-            <p>No hay rondas activas en esta instalación.
-            <a href="{% url 'rondas:nueva' %}">Crea una</a>.</p>
-        </div>
-    {% endif %}
+    <p class="escaner-ayuda">El sistema elige automáticamente la ronda según la hora actual.</p>
+    <button type="button" id="btnIniciar" class="btn btn-primario">Iniciar ronda</button>
+    <div id="inicioMsg" class="escaner-resultado" aria-live="polite"></div>
 </div>
 
 {# ---------- FASE 2: ejecución ---------- #}
@@ -62,6 +52,8 @@
     var CSRF = "{{ csrf_token }}";
 
     var faseSeleccion = document.getElementById("faseSeleccion");
+    var btnIniciar = document.getElementById("btnIniciar");
+    var inicioMsg = document.getElementById("inicioMsg");
     var faseEjecucion = document.getElementById("faseEjecucion");
     var rondaNombre = document.getElementById("rondaNombre");
     var contador = document.getElementById("rondaContador");
@@ -92,7 +84,8 @@
             c.className = "circulo" + (p.hecho ? " completo" : "");
             c.setAttribute("data-punto-id", p.id);
             c.title = p.nombre;
-            c.textContent = (i + 1);
+            // Muestra el nombre del punto (en el orden de ronda_secuencia).
+            c.textContent = (i + 1) + ". " + p.nombre;
             circulos.appendChild(c);
         });
     }
@@ -177,6 +170,11 @@
                             "Punto escaneado: " + d.checkpoint + " — " + d.hora + detalleGeocerca(d));
                         mostrarBoton("Escanear otro");
                     }
+                } else if (d.ya_escaneado) {
+                    // Punto ya registrado en esta ejecución: no se registra de nuevo.
+                    if (d.progreso) { actualizarProgreso(d.progreso); }
+                    pintar("escaner-advertencia", "Ya escaneaste este punto en esta ronda.");
+                    mostrarBoton("Escanear otro");
                 } else {
                     pintar("escaner-error", "No se pudo escanear: " + (d.error || "Error desconocido."));
                     mostrarBoton("Reintentar");
@@ -188,40 +186,46 @@
         });
     }
 
-    // ---- Fase 1 -> iniciar ronda ----
-    document.querySelectorAll(".btn-ronda").forEach(function (b) {
-        b.addEventListener("click", function () {
-            b.disabled = true;
-            fetch(URL_INICIAR, {
-                method: "POST",
-                headers: { "X-CSRFToken": CSRF, "Content-Type": "application/x-www-form-urlencoded" },
-                body: "ronda_id=" + encodeURIComponent(b.getAttribute("data-ronda-id"))
-            }).then(function (r) { return r.json(); }).then(function (data) {
-                b.disabled = false;
-                if (!data.ok) { alert(data.error || "No se pudo iniciar la ronda."); return; }
-                rondaNombre.textContent = data.ronda;
-                actualizarProgreso(data.progreso);
-                faseSeleccion.hidden = true;
-                faseEjecucion.hidden = false;
-                iniciarCamara();
-            }).catch(function () {
-                b.disabled = false;
-                alert("Error de conexión al iniciar la ronda.");
-            });
+    // ---- Fase 1 -> iniciar ronda (el servidor decide cuál por la hora) ----
+    btnIniciar.addEventListener("click", function () {
+        btnIniciar.disabled = true;
+        inicioMsg.className = "escaner-resultado";
+        inicioMsg.textContent = "";
+        fetch(URL_INICIAR, {
+            method: "POST",
+            headers: { "X-CSRFToken": CSRF, "Content-Type": "application/x-www-form-urlencoded" },
+            body: ""
+        }).then(function (r) {
+            return r.json().then(function (data) { return { ok: r.ok, data: data }; });
+        }).then(function (res) {
+            btnIniciar.disabled = false;
+            if (!(res.ok && res.data.ok)) {
+                inicioMsg.className = "escaner-resultado escaner-advertencia";
+                inicioMsg.textContent = res.data.error || "No se pudo iniciar la ronda.";
+                return;
+            }
+            rondaNombre.textContent = res.data.ronda;
+            actualizarProgreso(res.data.progreso);
+            faseSeleccion.hidden = true;
+            faseEjecucion.hidden = false;
+            iniciarCamara();
+        }).catch(function () {
+            btnIniciar.disabled = false;
+            inicioMsg.className = "escaner-resultado escaner-error";
+            inicioMsg.textContent = "Error de conexión al iniciar la ronda.";
         });
     });
 
     btn.addEventListener("click", iniciarCamara);
 
-    // Volver a la lista de rondas (recarga para refrescar el estado).
+    // Volver a iniciar (recarga para refrescar el estado).
     btnVolver.addEventListener("click", function () {
         detener();
         window.location.reload();
     });
 
     if (typeof Html5QrcodeScanner === "undefined") {
-        // La librería del lector no cargó: avisamos al entrar a una ronda.
-        document.querySelectorAll(".btn-ronda").forEach(function (b) { b.disabled = true; });
+        btnIniciar.disabled = true;
     }
 })();
 </script>

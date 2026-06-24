@@ -50,6 +50,33 @@ def _parse_coord(valor):
         return None
 
 
+def _en_rango(t, ini, fin):
+    """¿La hora t está dentro de [ini, fin]? Soporta rango que cruza medianoche."""
+    if ini <= fin:
+        return ini <= t <= fin
+    return t >= ini or t <= fin  # cruza medianoche (ej. 19:00 -> 07:00)
+
+
+def _ronda_para_ahora(instalacion_id):
+    """Ronda activa de la instalación cuyo rango horario contiene la hora actual
+    de Santiago (hora del SERVIDOR, no del navegador). None si ninguna aplica."""
+    ahora = timezone.localtime(timezone.now()).time()
+    rondas = (
+        Ronda.objects
+        .filter(
+            instalacion_id=instalacion_id,
+            estado=EstadoGenerico.ACTIVA,
+            hora_inicio__isnull=False,
+            hora_fin__isnull=False,
+        )
+        .order_by("nombre")
+    )
+    for r in rondas:
+        if _en_rango(ahora, r.hora_inicio, r.hora_fin):
+            return r
+    return None
+
+
 def _ejecucion_en_curso(guardia_keycloak_id):
     """Última ronda_ejecucion en curso del guardia (o None)."""
     return (
@@ -100,19 +127,15 @@ def _estado_ejecucion(ejecucion):
 @requiere_instalacion
 @solo_super_admin
 def index(request):
-    """Pantalla del simulador: lista de rondas activas para elegir + escáner."""
-    rondas = (
-        Ronda.objects
-        .filter(instalacion_id=request.session["instalacion_id"], estado=EstadoGenerico.ACTIVA)
-        .order_by("nombre")
-    )
-    return render(request, "escaner/escaner.html", {"rondas": rondas})
+    """Pantalla del simulador. La ronda se decide por hora al iniciar (ver iniciar)."""
+    return render(request, "escaner/escaner.html")
 
 
 @login_required
 @require_POST
 def iniciar(request):
-    """Inicia una ejecución de la ronda elegida (estado en_curso). Solo super_admin."""
+    """Inicia la ejecución de la ronda que corresponde a la HORA ACTUAL del
+    servidor (zona Santiago). Solo super_admin. No se elige Día/Noche a mano."""
     if not permisos.es_super_admin(request):
         return JsonResponse({"ok": False, "error": "No autorizado."}, status=403)
 
@@ -120,13 +143,9 @@ def iniciar(request):
     if not instalacion_id:
         return JsonResponse({"ok": False, "error": "Selecciona una instalación primero."}, status=400)
 
-    ronda = (
-        Ronda.objects
-        .filter(pk=request.POST.get("ronda_id"), instalacion_id=instalacion_id, estado=EstadoGenerico.ACTIVA)
-        .first()
-    )
+    ronda = _ronda_para_ahora(instalacion_id)
     if ronda is None:
-        return JsonResponse({"ok": False, "error": "Ronda no encontrada."}, status=404)
+        return JsonResponse({"ok": False, "error": "No hay ronda activa en este horario."}, status=404)
 
     keycloak_id = getattr(request.user, "keycloak_id", "") or ""
     ejecucion = RondaEjecucion.objects.create(
@@ -193,6 +212,27 @@ def registrar(request):
                     texto=texto or f"QR escaneado sin coincidencia: {qr_token}",
                 )
             return JsonResponse({"ok": False, "error": "Código no existe."}, status=404)
+
+        # Bloqueo de re-escaneo: si este punto ya se registró en la ejecución en
+        # curso, NO se registra de nuevo (solo se avisa). El progreso no cambia.
+        if ejecucion and LibroNovedades.objects.filter(
+            ronda_id=ejecucion.ronda_id,
+            guardia_keycloak_id=keycloak_id,
+            punto_control=cp,
+            timestamp_servidor__gte=ejecucion.iniciada_en,
+        ).exists():
+            estado = _estado_ejecucion(ejecucion)
+            return JsonResponse({
+                "ok": False,
+                "ya_escaneado": True,
+                "error": "Ya escaneaste este punto en esta ronda.",
+                "checkpoint": cp.nombre,
+                "progreso": {
+                    "escaneados": estado["escaneados"],
+                    "total": estado["total"],
+                    "puntos": estado["puntos"],
+                },
+            })
 
         # Distancia del celular al punto (siempre, para auditoría). Acotada al
         # máximo del campo (decimal 7,2 -> 99999.99 m) por seguridad.

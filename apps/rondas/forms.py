@@ -32,6 +32,17 @@ class RondaForm(forms.ModelForm):
         widget=forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
         input_formats=["%Y-%m-%d"],
     )
+    # Rango horario del turno (manual). Puede cruzar medianoche (inicio > fin).
+    hora_inicio = forms.TimeField(
+        label="Hora inicio",
+        widget=forms.TimeInput(attrs={"type": "time"}, format="%H:%M"),
+        input_formats=["%H:%M", "%H:%M:%S"],
+    )
+    hora_fin = forms.TimeField(
+        label="Hora fin",
+        widget=forms.TimeInput(attrs={"type": "time"}, format="%H:%M"),
+        input_formats=["%H:%M", "%H:%M:%S"],
+    )
     # Opcional a nivel de campo: la obligatoriedad depende del modo (ver clean()).
     puntos = forms.ModelMultipleChoiceField(
         queryset=PuntoControl.objects.none(),  # se fija en __init__ por instalación
@@ -56,7 +67,7 @@ class RondaForm(forms.ModelForm):
 
     class Meta:
         model = Ronda
-        fields = ["nombre", "fecha_inicio"]
+        fields = ["nombre", "fecha_inicio", "hora_inicio", "hora_fin"]
 
     def __init__(self, *args, instalacion_id=None, **kwargs):
         super().__init__(*args, **kwargs)

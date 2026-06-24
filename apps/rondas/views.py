@@ -74,8 +74,9 @@ def _guardar_programacion(ronda, repite, horarios):
     if not repite:
         return
     prog = Programacion.objects.create(ronda=ronda, repite=repite, activo=True)
+    # 'orden' = posición de ingreso del usuario (no reordenar por reloj).
     ProgramacionHorario.objects.bulk_create(
-        [ProgramacionHorario(programacion=prog, hora=h, minuto=m) for h, m in horarios]
+        [ProgramacionHorario(programacion=prog, hora=h, minuto=m, orden=i) for i, (h, m) in enumerate(horarios, start=1)]
     )
 
 
@@ -163,7 +164,7 @@ def editar(request, pk):
         if prog:
             horarios = [
                 {"hora": ph.hora, "minuto": ph.minuto}
-                for ph in ProgramacionHorario.objects.filter(programacion=prog).order_by("hora", "minuto")
+                for ph in ProgramacionHorario.objects.filter(programacion=prog).order_by("orden")
             ]
     return render(request, "rondas/form.html", {"form": form, "modo": "editar", "ronda": ronda, "horarios": horarios})
 

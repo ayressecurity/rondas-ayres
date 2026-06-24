@@ -663,15 +663,13 @@ body.menu-abierto .menu-toggle span:nth-child(3) { transform: translateY(-7px) r
 .ronda-progreso-cab h2 { margin: 0; font-size: 1.15rem; }
 .ronda-contador { font-weight: 700; color: var(--rojo); font-size: 1.1rem; white-space: nowrap; }
 
-.ronda-circulos { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0 6px; }
+.ronda-circulos { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 6px; }
 .ronda-circulos .circulo {
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    border: 2px solid var(--oscuro);
     display: inline-flex;
     align-items: center;
-    justify-content: center;
+    padding: 6px 12px;
+    border-radius: 16px;
+    border: 2px solid var(--oscuro);
     font-size: 0.82rem;
     font-weight: 600;
     color: var(--oscuro);

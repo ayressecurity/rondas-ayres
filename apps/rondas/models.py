@@ -33,6 +33,11 @@ class Ronda(models.Model):
     instalacion_id = models.BigIntegerField(db_index=True)  # (*) espejo, SIN FK
     nombre = models.CharField(max_length=120)
     fecha_inicio = models.DateField()
+    # Rango horario del turno (se ingresan a mano). hora_inicio > hora_fin
+    # significa que el rango CRUZA MEDIANOCHE (ej. noche 19:00 -> 07:00).
+    # Nullable para no romper rondas previas; el formulario los exige.
+    hora_inicio = models.TimeField(null=True, blank=True)
+    hora_fin = models.TimeField(null=True, blank=True)
     # Modo de orden de los puntos: True = el sistema asigna orden (aleatorio al
     # crear); False = el guardia elige el orden en terreno. No viene del esquema
     # base; se agrega para recordar el modo elegido por ronda.
@@ -83,9 +88,11 @@ class ProgramacionHorario(models.Model):
     programacion = models.ForeignKey("rondas.Programacion", on_delete=models.PROTECT)
     hora = models.PositiveSmallIntegerField()  # 0-23
     minuto = models.PositiveSmallIntegerField()  # 0-59
+    orden = models.PositiveSmallIntegerField(default=0)  # orden de ingreso del usuario
 
     class Meta:
         db_table = "programacion_horario"
+        ordering = ["orden"]
 
 
 class Notificacion(models.Model):
