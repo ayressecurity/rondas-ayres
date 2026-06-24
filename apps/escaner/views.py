@@ -1,12 +1,16 @@
 """
-App 'escaner' — ESCÁNER DE PRUEBA (QR). Herramienta de testeo SOLO para
-super_admin: lee el qr_token de un punto_control con la cámara + GPS del celular
-y registra el escaneo en libro_novedades, calculando distancia a la geocerca.
-No tiene modelos propios (solo escribe en novedades).
+App 'escaner' — SIMULADOR DE EJECUCIÓN DE RONDA (testeo de la futura app móvil).
+SOLO super_admin, dentro de la instalación seleccionada.
 
-Pre-versión para validar el flujo de escaneo de la app móvil.
+Flujo: el guardia elige una ronda activa -> se crea una ronda_ejecucion en curso
+-> escanea los QR de los puntos (cámara + GPS obligatorio) -> cada escaneo se
+registra en libro_novedades (con ronda_id = ronda en curso) y se recalcula el
+progreso X/Y. Al completar todos los puntos, la ejecución pasa a 'completada'.
+
+Conserva el registro existente en libro_novedades (arribo / arribo_invalido /
+arribo_sin_geo, distancia haversine, lat/lng, observación, timestamps, guardia).
 """
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from math import asin, cos, radians, sin, sqrt
 
 from django.contrib.auth.decorators import login_required
@@ -17,9 +21,11 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from apps.checkpoints.models import PuntoControl
-from apps.comun.decoradores import solo_super_admin
+from apps.comun.decoradores import requiere_instalacion, solo_super_admin
 from apps.cuentas import permisos
 from apps.novedades.models import LibroNovedades, TipoEvento
+from apps.rondas.models import Ronda, RondaSecuencia, EstadoGenerico
+from .models import RondaEjecucion
 
 # Radio medio de la Tierra en metros (para haversine).
 RADIO_TIERRA_M = 6_371_000
@@ -44,27 +50,106 @@ def _parse_coord(valor):
         return None
 
 
+def _ejecucion_en_curso(guardia_keycloak_id):
+    """Última ronda_ejecucion en curso del guardia (o None)."""
+    return (
+        RondaEjecucion.objects
+        .filter(guardia_keycloak_id=guardia_keycloak_id, estado=RondaEjecucion.Estado.EN_CURSO)
+        .order_by("-iniciada_en")
+        .first()
+    )
+
+
+def _estado_ejecucion(ejecucion):
+    """Progreso de la ejecución: puntos en orden + cuáles ya se escanearon.
+
+    total = puntos en ronda_secuencia de la ronda.
+    escaneados = puntos DISTINTOS de la ronda ya registrados por el guardia desde
+    iniciada_en. Devuelve la lista de puntos en el ORDEN guardado (orden).
+    """
+    secuencia = (
+        RondaSecuencia.objects
+        .filter(ronda_id=ejecucion.ronda_id)
+        .select_related("punto_control")
+        .order_by("orden")
+    )
+    punto_ids = [s.punto_control_id for s in secuencia]
+    completados = set(
+        LibroNovedades.objects
+        .filter(
+            ronda_id=ejecucion.ronda_id,
+            guardia_keycloak_id=ejecucion.guardia_keycloak_id,
+            timestamp_servidor__gte=ejecucion.iniciada_en,
+            punto_control_id__in=punto_ids,
+        )
+        .values_list("punto_control_id", flat=True)
+    )
+    puntos = [
+        {"id": s.punto_control_id, "nombre": s.punto_control.nombre, "hecho": s.punto_control_id in completados}
+        for s in secuencia
+    ]
+    return {
+        "total": len(punto_ids),
+        "escaneados": len(completados),
+        "puntos": puntos,
+        "punto_ids": punto_ids,
+    }
+
+
 @login_required
+@requiere_instalacion
 @solo_super_admin
 def index(request):
-    """Pantalla del escáner de prueba (cámara + GPS + lector QR). Solo super_admin."""
-    return render(request, "escaner/escaner.html")
+    """Pantalla del simulador: lista de rondas activas para elegir + escáner."""
+    rondas = (
+        Ronda.objects
+        .filter(instalacion_id=request.session["instalacion_id"], estado=EstadoGenerico.ACTIVA)
+        .order_by("nombre")
+    )
+    return render(request, "escaner/escaner.html", {"rondas": rondas})
+
+
+@login_required
+@require_POST
+def iniciar(request):
+    """Inicia una ejecución de la ronda elegida (estado en_curso). Solo super_admin."""
+    if not permisos.es_super_admin(request):
+        return JsonResponse({"ok": False, "error": "No autorizado."}, status=403)
+
+    instalacion_id = request.session.get("instalacion_id")
+    if not instalacion_id:
+        return JsonResponse({"ok": False, "error": "Selecciona una instalación primero."}, status=400)
+
+    ronda = (
+        Ronda.objects
+        .filter(pk=request.POST.get("ronda_id"), instalacion_id=instalacion_id, estado=EstadoGenerico.ACTIVA)
+        .first()
+    )
+    if ronda is None:
+        return JsonResponse({"ok": False, "error": "Ronda no encontrada."}, status=404)
+
+    keycloak_id = getattr(request.user, "keycloak_id", "") or ""
+    ejecucion = RondaEjecucion.objects.create(
+        ronda=ronda,
+        guardia_keycloak_id=keycloak_id,
+        instalacion_id=instalacion_id,
+        estado=RondaEjecucion.Estado.EN_CURSO,
+    )
+    estado = _estado_ejecucion(ejecucion)
+    return JsonResponse({
+        "ok": True,
+        "ronda": ronda.nombre,
+        "progreso": {"escaneados": estado["escaneados"], "total": estado["total"], "puntos": estado["puntos"]},
+    })
 
 
 @login_required
 @require_POST
 def registrar(request):
     """
-    Recibe qr_token + lat/lng (del celular, OBLIGATORIOS) + texto (opcional) y
-    registra el escaneo en libro_novedades. Solo super_admin (403 JSON si no).
-
-    - Faltan lat/lng -> error, no registra.
-    - Sin punto activo con ese token -> registra 'codigo_no_existe' y responde error.
-    - Con punto activo -> SIEMPRE guarda lat/lng del celular y la distancia
-      (haversine) al punto. Si el punto valida posición: tipo 'arribo' y
-      dentro_geocerca = (distancia <= tolerancia). Si no valida: tipo
-      'arribo_sin_geo' y dentro_geocerca = null (pero igual guarda lat/lng/dist).
-    Todo dentro de una transacción.
+    Registra un escaneo en libro_novedades (igual que antes) y, si hay una
+    ejecución en curso, lo asocia a esa ronda y devuelve el progreso. Solo
+    super_admin (403 JSON si no).
     """
     if not permisos.es_super_admin(request):
         return JsonResponse({"ok": False, "error": "No autorizado."}, status=403)
@@ -85,15 +170,19 @@ def registrar(request):
     keycloak_id = getattr(request.user, "keycloak_id", "") or ""
     ahora = timezone.now()
 
+    # Ejecución en curso (si la hay): sus escaneos se etiquetan con su ronda_id.
+    ejecucion = _ejecucion_en_curso(keycloak_id)
+    ronda_id_evento = ejecucion.ronda_id if ejecucion else None
+
     cp = PuntoControl.objects.filter(qr_token=qr_token, activo=True).first()
 
     with transaction.atomic():
         if cp is None:
-            # Código sin coincidencia: dejamos rastro con tipo 'codigo_no_existe'.
             tipo_ne = TipoEvento.objects.filter(codigo="codigo_no_existe").first()
             if tipo_ne:
                 LibroNovedades.objects.create(
                     instalacion_id=0,  # desconocido (no hay punto); sin FK
+                    ronda_id=ronda_id_evento,
                     guardia_keycloak_id=keycloak_id,
                     tipo_evento=tipo_ne,
                     timestamp_evento=ahora,
@@ -105,22 +194,18 @@ def registrar(request):
                 )
             return JsonResponse({"ok": False, "error": "Código no existe."}, status=404)
 
-        # Distancia del celular al punto (siempre, para auditoría). La geocerca
-        # se evalúa con la distancia real; al GUARDAR la acotamos al máximo del
-        # campo (decimal 7,2 -> 99999.99 m) para no romper si el GPS está lejísimos.
+        # Distancia del celular al punto (siempre, para auditoría). Acotada al
+        # máximo del campo (decimal 7,2 -> 99999.99 m) por seguridad.
         distancia_m = _haversine_m(lat, lng, float(cp.lat), float(cp.lng))
         distancia_dec = min(Decimal(f"{distancia_m:.2f}"), Decimal("99999.99"))
 
         if not cp.validar_posicion:
-            # Punto sin validación de posición: no se evalúa la geocerca.
             codigo_tipo = "arribo_sin_geo"
             dentro_geocerca = None
         elif distancia_m <= cp.tolerancia_mts:
-            # Dentro de la tolerancia: arribo válido.
             codigo_tipo = "arribo"
             dentro_geocerca = True
         else:
-            # Fuera de la tolerancia: arribo desde posición inválida.
             codigo_tipo = "arribo_invalido"
             dentro_geocerca = False
 
@@ -133,6 +218,7 @@ def registrar(request):
 
         LibroNovedades.objects.create(
             instalacion_id=cp.instalacion_id,
+            ronda_id=ronda_id_evento,             # NUEVO: ronda en curso (o null)
             punto_control=cp,
             guardia_keycloak_id=keycloak_id,
             tipo_evento=tipo_evento,
@@ -146,12 +232,29 @@ def registrar(request):
             texto=texto,
         )
 
-    # En BD se guarda con USE_TZ (UTC). Para MOSTRAR: localtime -> Santiago de
-    # Chile (TIME_ZONE) y formato HH:MM:SS, sin microsegundos/decimales.
-    return JsonResponse({
+    resp = {
         "ok": True,
         "checkpoint": cp.nombre,
+        # En BD se guarda con USE_TZ (UTC). Para MOSTRAR: localtime -> Santiago, HH:MM:SS.
         "hora": timezone.localtime(ahora).strftime("%H:%M:%S"),
         "distancia_metros": float(distancia_dec),
         "dentro_geocerca": dentro_geocerca,
-    })
+    }
+
+    # Progreso de la ronda en curso (si la hay).
+    if ejecucion:
+        estado = _estado_ejecucion(ejecucion)
+        resp["pertenece"] = cp.id in estado["punto_ids"]
+        resp["progreso"] = {
+            "escaneados": estado["escaneados"],
+            "total": estado["total"],
+            "puntos": estado["puntos"],
+        }
+        completada = estado["total"] > 0 and estado["escaneados"] >= estado["total"]
+        resp["completada"] = completada
+        if completada and ejecucion.estado != RondaEjecucion.Estado.COMPLETADA:
+            ejecucion.estado = RondaEjecucion.Estado.COMPLETADA
+            ejecucion.finalizada_en = ahora
+            ejecucion.save(update_fields=["estado", "finalizada_en"])
+
+    return JsonResponse(resp)

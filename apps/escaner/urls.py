@@ -6,5 +6,6 @@ app_name = "escaner"
 
 urlpatterns = [
     path("", views.index, name="index"),
+    path("iniciar/", views.iniciar, name="iniciar"),
     path("registrar/", views.registrar, name="registrar"),
 ]

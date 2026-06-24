@@ -1,90 +1,121 @@
 {% extends "base.html" %}
 
-{% block titulo %}Escáner de prueba (QR) — Rondas{% endblock %}
+{% block titulo %}Simulador de ronda (QR) — Rondas{% endblock %}
 
 {% block contenido %}
 <div class="modulo-cabecera">
     <div>
-        <h1>Escáner de prueba (QR)</h1>
-        <p class="contexto-instalacion">Herramienta de testeo — solo super administradores.</p>
+        <h1>Simulador de ronda (QR)</h1>
+        <p class="contexto-instalacion">Instalación: <strong>{{ instalacion_nombre }}</strong> — solo super administradores.</p>
     </div>
 </div>
 
-<div class="escaner-wrap">
-    <p class="escaner-ayuda">
-        Apunta la cámara al código QR de un punto de control. <strong>Debes permitir
-        la ubicación</strong>: se registra con el GPS del celular para validar la
-        geocerca. Una lectura válida queda registrada y detiene la cámara.
-    </p>
+{# ---------- FASE 1: elegir ronda ---------- #}
+<div id="faseSeleccion" class="escaner-wrap">
+    {% if rondas %}
+        <p class="escaner-ayuda">Elige la ronda a ejecutar:</p>
+        <div class="rondas-elegir">
+            {% for r in rondas %}
+                <button type="button" class="btn btn-primario btn-ronda" data-ronda-id="{{ r.id }}">{{ r.nombre }}</button>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="estado-vacio">
+            <p>No hay rondas activas en esta instalación.
+            <a href="{% url 'rondas:nueva' %}">Crea una</a>.</p>
+        </div>
+    {% endif %}
+</div>
+
+{# ---------- FASE 2: ejecución ---------- #}
+<div id="faseEjecucion" class="escaner-wrap" hidden>
+    <div class="ronda-progreso-cab">
+        <h2 id="rondaNombre"></h2>
+        <span class="ronda-contador" id="rondaContador">0/0</span>
+    </div>
+    <div class="ronda-circulos" id="rondaCirculos" aria-label="Progreso de la ronda"></div>
+
+    <p class="escaner-ayuda">Permite la ubicación (GPS) y escanea el QR de cada punto en orden.</p>
 
     <div class="campo-form">
         <label for="campoObservacion">Observación (opcional)</label>
-        <textarea id="campoObservacion" rows="2" maxlength="1000"
-                  placeholder="Nota opcional para este escaneo"></textarea>
+        <textarea id="campoObservacion" rows="2" maxlength="1000" placeholder="Nota opcional para este escaneo"></textarea>
     </div>
 
     <div id="reader" class="escaner-reader"></div>
     <div id="escanerResultado" class="escaner-resultado" aria-live="polite"></div>
     <div class="form-acciones">
         <button type="button" id="btnReiniciar" class="btn btn-primario" hidden>Escanear otro</button>
+        <button type="button" id="btnVolver" class="btn btn-secundario">Volver a rondas</button>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
-{# Lector de QR por cámara: librería externa permitida SOLO para esto. #}
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
 (function () {
     "use strict";
 
+    var URL_INICIAR = "{% url 'escaner:iniciar' %}";
     var URL_REGISTRAR = "{% url 'escaner:registrar' %}";
     var CSRF = "{{ csrf_token }}";
 
+    var faseSeleccion = document.getElementById("faseSeleccion");
+    var faseEjecucion = document.getElementById("faseEjecucion");
+    var rondaNombre = document.getElementById("rondaNombre");
+    var contador = document.getElementById("rondaContador");
+    var circulos = document.getElementById("rondaCirculos");
     var resultado = document.getElementById("escanerResultado");
     var btn = document.getElementById("btnReiniciar");
+    var btnVolver = document.getElementById("btnVolver");
     var observacion = document.getElementById("campoObservacion");
-    var scanner = null;
-    var procesando = false;   // evita ráfagas: una lectura a la vez
 
-    // textContent (no innerHTML) para no inyectar HTML del nombre del checkpoint.
+    var scanner = null;
+    var procesando = false;
+
     function pintar(clase, texto) {
         resultado.className = "escaner-resultado " + clase;
         resultado.textContent = texto;
     }
-
     function limpiarResultado() {
-        resultado.className = "escaner-resultado";  // vuelve a ocultarse (CSS)
+        resultado.className = "escaner-resultado";
         resultado.textContent = "";
     }
 
-    // Detiene la cámara y borra la UI del lector (cierra el escáner).
+    // ---- Progreso (contador + círculos) ----
+    function actualizarProgreso(prog) {
+        contador.textContent = prog.escaneados + "/" + prog.total;
+        circulos.innerHTML = "";
+        prog.puntos.forEach(function (p, i) {
+            var c = document.createElement("span");
+            c.className = "circulo" + (p.hecho ? " completo" : "");
+            c.setAttribute("data-punto-id", p.id);
+            c.title = p.nombre;
+            c.textContent = (i + 1);
+            circulos.appendChild(c);
+        });
+    }
+
+    // ---- Cámara ----
     function detener() {
         if (scanner) {
-            scanner.clear().catch(function () { /* ya estaba detenido */ });
+            scanner.clear().catch(function () {});
             scanner = null;
         }
     }
-
-    // Arranca (o reinicia) el lector: pide cámara y dibuja su propia UI.
-    function iniciar() {
+    function iniciarCamara() {
         limpiarResultado();
         btn.hidden = true;
         procesando = false;
-        scanner = new Html5QrcodeScanner(
-            "reader",
-            { fps: 10, qrbox: { width: 250, height: 250 } },
-            false
-        );
-        scanner.render(onScan, function () { /* ignora fallos de lectura por frame */ });
+        scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: { width: 250, height: 250 } }, false);
+        scanner.render(onScan, function () {});
     }
-
     function mostrarBoton(etiqueta) {
         btn.textContent = etiqueta;
         btn.hidden = false;
     }
 
-    // Promesa con la ubicación actual; rechaza si no hay permiso/soporte/timeout.
     function obtenerUbicacion() {
         return new Promise(function (resolve, reject) {
             if (!navigator.geolocation) { reject(); return; }
@@ -96,6 +127,14 @@
         });
     }
 
+    function detalleGeocerca(d) {
+        if (d.distancia_metros === null || d.distancia_metros === undefined) { return ""; }
+        var metros = Math.round(d.distancia_metros) + " m";
+        if (d.dentro_geocerca === true) { return " — dentro de la geocerca (" + metros + ")"; }
+        if (d.dentro_geocerca === false) { return " — FUERA de la geocerca (" + metros + ")"; }
+        return " — sin validación de geocerca (" + metros + ")";
+    }
+
     function registrar(qrToken, coords) {
         var cuerpo = "qr_token=" + encodeURIComponent(qrToken) +
                      "&lat=" + encodeURIComponent(coords.latitude) +
@@ -103,65 +142,87 @@
                      "&texto=" + encodeURIComponent((observacion.value || "").trim());
         return fetch(URL_REGISTRAR, {
             method: "POST",
-            headers: {
-                "X-CSRFToken": CSRF,
-                "Content-Type": "application/x-www-form-urlencoded"
-            },
+            headers: { "X-CSRFToken": CSRF, "Content-Type": "application/x-www-form-urlencoded" },
             body: cuerpo
         }).then(function (r) {
             return r.json().then(function (data) { return { ok: r.ok, data: data }; });
         });
     }
 
-    // Texto on-brand sobre la geocerca según la respuesta del backend.
-    function detalleGeocerca(data) {
-        if (data.distancia_metros === null || data.distancia_metros === undefined) { return ""; }
-        var metros = Math.round(data.distancia_metros) + " m";
-        if (data.dentro_geocerca === true) { return " — dentro de la geocerca (" + metros + ")"; }
-        if (data.dentro_geocerca === false) { return " — FUERA de la geocerca (" + metros + ")"; }
-        return " — sin validación de geocerca (" + metros + ")";  // null
-    }
-
     function onScan(texto) {
-        if (procesando) { return; }     // ignora lecturas en ráfaga
+        if (procesando) { return; }
         procesando = true;
-        detener();                       // corta la cámara apenas hay una lectura
+        detener();
         pintar("escaner-procesando", "Obteniendo ubicación…");
-
         var qrToken = (texto || "").trim();
 
         obtenerUbicacion().then(function (coords) {
             pintar("escaner-procesando", "Registrando…");
             return registrar(qrToken, coords).then(function (res) {
-                if (res.ok && res.data.ok) {
-                    pintar("escaner-ok",
-                        "Punto escaneado: " + res.data.checkpoint + " — " + res.data.hora + detalleGeocerca(res.data));
-                    observacion.value = "";   // limpia la nota: ya quedó registrada
-                    mostrarBoton("Escanear otro");
+                var d = res.data;
+                if (res.ok && d.ok) {
+                    if (d.progreso) { actualizarProgreso(d.progreso); }
+                    observacion.value = "";  // ya quedó registrada
+
+                    if (d.completada) {
+                        pintar("escaner-ok", "Ronda completada ✓ — todos los puntos escaneados.");
+                        // Ronda terminada: no se sigue escaneando esta ejecución.
+                    } else if (d.pertenece === false) {
+                        pintar("escaner-advertencia",
+                            "Este punto no pertenece a la ronda en curso (igual se registró): "
+                            + d.checkpoint + " — " + d.hora + detalleGeocerca(d));
+                        mostrarBoton("Escanear otro");
+                    } else {
+                        pintar("escaner-ok",
+                            "Punto escaneado: " + d.checkpoint + " — " + d.hora + detalleGeocerca(d));
+                        mostrarBoton("Escanear otro");
+                    }
                 } else {
-                    pintar("escaner-error", "No se pudo escanear: " + (res.data.error || "Error desconocido."));
+                    pintar("escaner-error", "No se pudo escanear: " + (d.error || "Error desconocido."));
                     mostrarBoton("Reintentar");
                 }
             });
         }).catch(function () {
-            // Sin ubicación NO se registra nada (el GPS es obligatorio).
             pintar("escaner-error", "Debes permitir la ubicación para registrar el punto.");
             mostrarBoton("Reintentar");
         });
     }
 
-    btn.addEventListener("click", iniciar);
+    // ---- Fase 1 -> iniciar ronda ----
+    document.querySelectorAll(".btn-ronda").forEach(function (b) {
+        b.addEventListener("click", function () {
+            b.disabled = true;
+            fetch(URL_INICIAR, {
+                method: "POST",
+                headers: { "X-CSRFToken": CSRF, "Content-Type": "application/x-www-form-urlencoded" },
+                body: "ronda_id=" + encodeURIComponent(b.getAttribute("data-ronda-id"))
+            }).then(function (r) { return r.json(); }).then(function (data) {
+                b.disabled = false;
+                if (!data.ok) { alert(data.error || "No se pudo iniciar la ronda."); return; }
+                rondaNombre.textContent = data.ronda;
+                actualizarProgreso(data.progreso);
+                faseSeleccion.hidden = true;
+                faseEjecucion.hidden = false;
+                iniciarCamara();
+            }).catch(function () {
+                b.disabled = false;
+                alert("Error de conexión al iniciar la ronda.");
+            });
+        });
+    });
+
+    btn.addEventListener("click", iniciarCamara);
+
+    // Volver a la lista de rondas (recarga para refrescar el estado).
+    btnVolver.addEventListener("click", function () {
+        detener();
+        window.location.reload();
+    });
 
     if (typeof Html5QrcodeScanner === "undefined") {
-        pintar("escaner-error", "No se pudo cargar el lector de QR (revisa la conexión).");
-        return;
+        // La librería del lector no cargó: avisamos al entrar a una ronda.
+        document.querySelectorAll(".btn-ronda").forEach(function (b) { b.disabled = true; });
     }
-
-    // Pide permiso de ubicación al entrar (junto con la cámara) para no demorar
-    // el primer escaneo; el resultado real se toma al momento de leer el QR.
-    obtenerUbicacion().then(function () {}).catch(function () {});
-
-    iniciar();
 })();
 </script>
 {% endblock %}
