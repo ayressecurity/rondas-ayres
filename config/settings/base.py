@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     "apps.rondas",
     "apps.novedades",
     "apps.informes",
+    "apps.reportar_novedad",
     "apps.control_vehicular",
     "apps.personas",
     "apps.dispositivos",
@@ -152,7 +153,10 @@ STORAGES = {
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
 }
 
-MEDIA_URL = env("MEDIA_URL", default="media/")
+# MEDIA: archivos subidos por el usuario (fotos de checkpoints, novedades...).
+# En el servidor (DEBUG=False) los sirve Nginx en /media/ (ver despliegue).
+# La URL lleva barra inicial para que sea absoluta (/media/...).
+MEDIA_URL = env("MEDIA_URL", default="/media/")
 MEDIA_ROOT = env("MEDIA_ROOT", default=BASE_DIR / "media")
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

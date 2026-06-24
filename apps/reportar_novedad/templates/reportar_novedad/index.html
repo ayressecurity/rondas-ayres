@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block titulo %}Reportar novedad — Rondas{% endblock %}
+
+{% block contenido %}
+<div class="modulo-cabecera">
+    <div>
+        <h1>Reportar novedad</h1>
+        <p class="contexto-instalacion">Instalación: <strong>{{ instalacion_nombre }}</strong> — solo super administradores.</p>
+    </div>
+</div>
+
+{% if form.non_field_errors %}
+    <div class="form-errores">
+        {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+{% endif %}
+
+<form method="post" enctype="multipart/form-data" class="form-tarjeta" novalidate>
+    {% csrf_token %}
+
+    <div class="campo-form">
+        <label for="{{ form.texto.id_for_label }}">{{ form.texto.label }} <span class="req">*</span></label>
+        {{ form.texto }}
+        {% for error in form.texto.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+    </div>
+
+    <div class="campo-form">
+        <label for="{{ form.foto.id_for_label }}">{{ form.foto.label }} <span class="req">*</span></label>
+        <small class="campo-ayuda">{{ form.foto.help_text }}</small>
+        {{ form.foto }}
+        {% for error in form.foto.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+    </div>
+
+    <div class="form-acciones">
+        <button type="submit" class="btn btn-primario">Guardar novedad</button>
+        <a href="{% url 'comun:dashboard' %}" class="btn btn-secundario">Cancelar</a>
+    </div>
+</form>
+{% endblock %}
