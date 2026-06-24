@@ -38,8 +38,10 @@
                     <td data-col="Tipo de evento">{{ ev.tipo_evento.nombre }}</td>
                     <td data-col="Guardia">{{ ev.guardia_nombre }}</td>
                     <td data-col="Imagen">
-                        {% if ev.foto_url %}
-                            <button type="button" class="accion-link accion-imagen" data-img-url="{{ ev.foto_url }}">Ver imagen</button>
+                        {% if ev.foto_urls %}
+                            <button type="button" class="accion-link accion-imagen" data-img-urls="{{ ev.foto_urls|join:'|' }}">
+                                {% if ev.foto_urls|length > 1 %}Ver imágenes{% else %}Ver imagen{% endif %}
+                            </button>
                         {% else %}—{% endif %}
                     </td>
                 </tr>
@@ -59,17 +61,15 @@
 </div>
 {% endif %}
 
-{# Modal on-brand para ver la imagen de la novedad (se rellena por JS). #}
+{# Modal on-brand para ver la(s) imagen(es) de la novedad (se rellena por JS). #}
 <div class="img-modal" id="imgModal" hidden>
     <div class="img-modal-overlay" data-img-cerrar></div>
     <div class="img-modal-caja" role="dialog" aria-modal="true" aria-labelledby="imgModalTitulo">
         <div class="qr-modal-cabecera">
-            <h2 id="imgModalTitulo">Imagen de la novedad</h2>
+            <h2 id="imgModalTitulo">Imágenes de la novedad</h2>
             <button type="button" class="qr-modal-cerrar" data-img-cerrar aria-label="Cerrar">×</button>
         </div>
-        <div class="img-modal-cuerpo">
-            <img id="imgModalImg" src="" alt="Foto de la novedad">
-        </div>
+        <div class="img-modal-grid" id="imgModalGrid"></div>
         <div class="form-acciones">
             <button type="button" class="btn btn-secundario" data-img-cerrar>Cerrar</button>
         </div>
@@ -79,24 +79,32 @@
 
 {% block scripts %}
 <script>
-// Modal de imagen de novedades: muestra la foto servida desde MEDIA.
+// Modal de imágenes de novedades: muestra una o varias fotos en grilla responsive.
 (function () {
     "use strict";
     var modal = document.getElementById("imgModal");
     if (!modal) { return; }
-    var img = document.getElementById("imgModalImg");
+    var grid = document.getElementById("imgModalGrid");
 
-    function abrir(url) {
-        img.src = url;
+    function abrir(urls) {
+        grid.innerHTML = "";
+        urls.forEach(function (u) {
+            if (!u) { return; }
+            var img = document.createElement("img");
+            img.src = u;
+            img.alt = "Foto de la novedad";
+            grid.appendChild(img);
+        });
+        // 1 foto = grilla de 1 columna; varias = responsive.
+        grid.classList.toggle("una-foto", urls.length === 1);
         modal.hidden = false;
     }
-    function cerrar() {
-        modal.hidden = true;
-        img.src = "";
-    }
+    function cerrar() { modal.hidden = true; grid.innerHTML = ""; }
 
     document.querySelectorAll(".accion-imagen").forEach(function (b) {
-        b.addEventListener("click", function () { abrir(b.getAttribute("data-img-url")); });
+        b.addEventListener("click", function () {
+            abrir((b.getAttribute("data-img-urls") || "").split("|"));
+        });
     });
     modal.addEventListener("click", function (e) {
         if (e.target.hasAttribute("data-img-cerrar")) { cerrar(); }

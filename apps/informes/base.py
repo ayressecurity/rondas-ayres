@@ -153,7 +153,7 @@ def eventos_filtrados(request, aplica_filtro):
 
 
 def _adjuntar_fotos(page_obj):
-    """Setea ev.foto_url (URL en MEDIA de la 1ª foto del evento) o None.
+    """Setea ev.foto_urls (lista de URLs en MEDIA de TODAS las fotos del evento).
 
     Solo consulta los medios de los eventos de la página actual (no todo).
     """
@@ -167,10 +167,9 @@ def _adjuntar_fotos(page_obj):
             .values_list("libro_novedades_id", "path")
         )
         for libro_id, path in medios:
-            fotos.setdefault(libro_id, path)  # primera foto por evento
+            fotos.setdefault(libro_id, []).append(default_storage.url(path))
     for ev in page_obj:
-        path = fotos.get(ev.id)
-        ev.foto_url = default_storage.url(path) if path else None
+        ev.foto_urls = fotos.get(ev.id, [])
 
 
 def render_informe(request, *, titulo, aplica_filtro, export_url=None,

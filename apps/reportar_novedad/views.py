@@ -44,14 +44,19 @@ def index(request):
                         estado="ok",
                         texto=form.cleaned_data["texto"],
                     )
-                    path = default_storage.save(
-                        f"novedades/{uuid4().hex}.{form.imagen_ext}",
-                        ContentFile(form.imagen_bytes),
-                    )
-                    LibroNovedadesMedia.objects.create(
-                        libro_novedades=evento, tipo=TipoMedia.FOTO, path=path
-                    )
-                messages.success(request, "Novedad reportada correctamente.")
+                    # UN registro de media por CADA foto tomada.
+                    for crudo, ext in form.imagenes:
+                        path = default_storage.save(
+                            f"novedades/{uuid4().hex}.{ext}", ContentFile(crudo)
+                        )
+                        LibroNovedadesMedia.objects.create(
+                            libro_novedades=evento, tipo=TipoMedia.FOTO, path=path
+                        )
+                n = len(form.imagenes)
+                messages.success(
+                    request,
+                    f"Novedad reportada con {n} foto{'s' if n != 1 else ''}.",
+                )
                 return redirect("reportar_novedad:index")  # PRG: limpia el formulario
     else:
         form = ReportarNovedadForm()

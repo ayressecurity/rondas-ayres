@@ -3,17 +3,21 @@ Informes del libro de novedades (solo lectura). Cada vista reutiliza la base
 común (apps/informes/base.py) y solo define su filtro de tipo_evento. La
 exportación a Excel respeta el filtro de instalación Y el filtro de fechas.
 """
+from io import BytesIO
+
 from django.contrib.auth.decorators import login_required
+from django.core.files.storage import default_storage
 from django.http import HttpResponse
 from django.utils import timezone
 from django.utils.text import slugify
 
 from openpyxl import Workbook
+from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from apps.comun.decoradores import requiere_instalacion
-from apps.novedades.models import CategoriaEvento
+from apps.novedades.models import CategoriaEvento, LibroNovedadesMedia, TipoMedia
 from .base import eventos_filtrados, render_informe
 
 
@@ -153,10 +157,109 @@ def exportar_rondas(request):
     )
 
 
+# --- Excel de Novedades: columnas propias + imágenes insertadas ---
+COLUMNAS_NOVEDAD = [
+    ("Fecha/Hora", 20),
+    ("Observación", 45),
+    ("Tipo de evento", 20),
+    ("Guardia", 24),
+]
+IMG_PX = 90          # tamaño uniforme de cada miniatura en el Excel
+COL_IMG_ANCHO = 14   # ancho de columna que encaja ~90px
+FILA_ALTO = 70       # alto de fila que encaja ~90px
+
+
+def _fotos_por_evento(eventos):
+    """{libro_id: [paths...]} de las fotos de los eventos dados (1 query)."""
+    ids = [ev.id for ev in eventos]
+    fotos = {}
+    if ids:
+        for libro_id, path in (
+            LibroNovedadesMedia.objects
+            .filter(libro_novedades_id__in=ids, tipo=TipoMedia.FOTO)
+            .order_by("id")
+            .values_list("libro_novedades_id", "path")
+        ):
+            fotos.setdefault(libro_id, []).append(path)
+    return fotos
+
+
 @login_required
 @requiere_instalacion
 def exportar_novedades(request):
-    """Exporta el Informe de Novedades a .xlsx respetando instalación + fechas."""
-    return _exportar_excel(
-        request, titulo="Informe de Novedades", aplica_filtro=_filtro_novedades, slug_base="informe_novedades"
+    """Exporta el Informe de Novedades a .xlsx (respeta instalación + fechas),
+    INSERTANDO las fotos reales en la columna de imágenes."""
+    eventos, _rango, etiqueta, _valores = eventos_filtrados(request, _filtro_novedades)
+    instalacion = request.session.get("instalacion_nombre") or "instalacion"
+    fotos = _fotos_por_evento(eventos)
+    max_fotos = max((len(v) for v in fotos.values()), default=0)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Informe de Novedades"[:31]
+
+    base_cols = len(COLUMNAS_NOVEDAD)
+    total_cols = base_cols + max(max_fotos, 1)  # +columnas de imágenes
+
+    # Título (fila 1) con instalación + rango.
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_cols)
+    celda_titulo = ws.cell(row=1, column=1, value=f"Informe de Novedades — {instalacion} — {etiqueta}")
+    celda_titulo.font = Font(bold=True, size=13, color=ROJO_MARCA)
+    celda_titulo.alignment = Alignment(horizontal="left", vertical="center")
+
+    # Encabezados (fila 2): rojo de marca + blanco.
+    relleno = PatternFill(start_color=ROJO_MARCA, end_color=ROJO_MARCA, fill_type="solid")
+    fuente = Font(bold=True, color="FFFFFF")
+    centrado = Alignment(horizontal="center", vertical="center")
+    for col, (nombre, ancho) in enumerate(COLUMNAS_NOVEDAD, start=1):
+        celda = ws.cell(row=2, column=col, value=nombre)
+        celda.fill = relleno
+        celda.font = fuente
+        celda.alignment = centrado
+        ws.column_dimensions[get_column_letter(col)].width = ancho
+    celda_img = ws.cell(row=2, column=base_cols + 1, value="Imágenes")
+    celda_img.fill = relleno
+    celda_img.font = fuente
+    celda_img.alignment = centrado
+    for c in range(base_cols + 1, total_cols + 1):
+        ws.column_dimensions[get_column_letter(c)].width = COL_IMG_ANCHO
+
+    # Datos.
+    fila = 3
+    for ev in eventos:
+        ws.cell(row=fila, column=1,
+                value=timezone.localtime(ev.timestamp_evento).strftime("%Y-%m-%d %H:%M:%S"))
+        ws.cell(row=fila, column=2, value=ev.texto or "—")
+        ws.cell(row=fila, column=3, value=ev.tipo_evento.nombre)
+        ws.cell(row=fila, column=4, value=ev.guardia_nombre)
+
+        paths = fotos.get(ev.id, [])
+        if paths:
+            ws.row_dimensions[fila].height = FILA_ALTO
+            for j, path in enumerate(paths):
+                try:
+                    with default_storage.open(path) as fh:
+                        datos = fh.read()
+                except (FileNotFoundError, OSError):
+                    continue
+                imagen = XLImage(BytesIO(datos))
+                imagen.width = IMG_PX
+                imagen.height = IMG_PX
+                # Cada foto en una columna contigua a partir de la de imágenes.
+                ancla = ws.cell(row=fila, column=base_cols + 1 + j).coordinate
+                ws.add_image(imagen, ancla)
+        else:
+            ws.cell(row=fila, column=base_cols + 1, value="—")
+        fila += 1
+
+    ws.freeze_panes = "A3"
+
+    hoy = timezone.localtime(timezone.now()).date().isoformat()
+    nombre_archivo = f"informe_novedades_{slugify(instalacion)}_{hoy}.xlsx"
+
+    resp = HttpResponse(
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+    resp["Content-Disposition"] = f'attachment; filename="{nombre_archivo}"'
+    wb.save(resp)
+    return resp

@@ -16,7 +16,7 @@
     </div>
 {% endif %}
 
-<form method="post" class="form-tarjeta" id="formNovedad" novalidate>
+<form method="post" class="form-tarjeta camara-form" id="formNovedad" novalidate>
     {% csrf_token %}
 
     <div class="campo-form">
@@ -26,24 +26,24 @@
     </div>
 
     <div class="campo-form">
-        <label>Foto <span class="req">*</span></label>
-        <small class="campo-ayuda">En el celular se abre la cámara trasera; en el computador se usa la webcam.</small>
+        <label>Fotos <span class="req">*</span></label>
+        <small class="campo-ayuda">En el celular se abre la cámara trasera; en el computador se usa la webcam.
+        Puedes tomar varias fotos.</small>
 
-        {# Vista en vivo de la cámara. #}
         <div class="camara-caja">
             <video id="camaraVideo" class="camara-video" autoplay playsinline></video>
-            <img id="camaraPreview" class="camara-preview" alt="Foto tomada" hidden>
-            <canvas id="camaraCanvas" hidden></canvas>
         </div>
         <div class="camara-acciones">
             <button type="button" id="btnTomar" class="btn btn-primario">Tomar foto</button>
-            <button type="button" id="btnOtra" class="btn btn-secundario" hidden>Tomar otra</button>
         </div>
         <p class="campo-error" id="camaraError" hidden></p>
 
-        {# La foto viaja como dataURL base64 en este campo oculto. #}
-        {{ form.foto_data }}
-        {% for error in form.foto_data.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+        {# Miniaturas de las fotos tomadas (grilla 3x3 responsive). #}
+        <div class="miniaturas" id="miniaturas" hidden></div>
+
+        <canvas id="camaraCanvas" hidden></canvas>
+        {{ form.fotos_json }}
+        {% for error in form.fotos_json.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
     </div>
 
     <div class="form-acciones">
@@ -59,28 +59,19 @@
     "use strict";
 
     var video = document.getElementById("camaraVideo");
-    var preview = document.getElementById("camaraPreview");
     var canvas = document.getElementById("camaraCanvas");
     var btnTomar = document.getElementById("btnTomar");
-    var btnOtra = document.getElementById("btnOtra");
     var errorBox = document.getElementById("camaraError");
-    var campoData = document.getElementById("{{ form.foto_data.id_for_label }}");
+    var miniaturas = document.getElementById("miniaturas");
+    var campoData = document.getElementById("{{ form.fotos_json.id_for_label }}");
     var form = document.getElementById("formNovedad");
+    var MAX = 9;
 
     var stream = null;
+    var fotos = [];   // lista de dataURLs acumuladas
 
-    function mostrarError(msg) {
-        errorBox.textContent = msg;
-        errorBox.hidden = false;
-    }
+    function mostrarError(msg) { errorBox.textContent = msg; errorBox.hidden = false; }
     function limpiarError() { errorBox.hidden = true; errorBox.textContent = ""; }
-
-    function detenerCamara() {
-        if (stream) {
-            stream.getTracks().forEach(function (t) { t.stop(); });
-            stream = null;
-        }
-    }
 
     function iniciarCamara() {
         limpiarError();
@@ -89,52 +80,59 @@
             btnTomar.disabled = true;
             return;
         }
-        // facingMode 'environment' = cámara trasera en celular; en PC usa la webcam.
         navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false })
-            .then(function (s) {
-                stream = s;
-                video.srcObject = s;
-                video.hidden = false;
-                preview.hidden = true;
-                btnTomar.hidden = false;
-                btnOtra.hidden = true;
-                btnTomar.disabled = false;
-            })
+            .then(function (s) { stream = s; video.srcObject = s; })
             .catch(function () {
                 mostrarError("No se pudo acceder a la cámara. Revisa los permisos del navegador.");
             });
     }
 
+    function pintarMiniaturas() {
+        miniaturas.innerHTML = "";
+        miniaturas.hidden = fotos.length === 0;
+        fotos.forEach(function (src, i) {
+            var celda = document.createElement("div");
+            celda.className = "miniatura";
+            var img = document.createElement("img");
+            img.src = src;
+            var quitar = document.createElement("button");
+            quitar.type = "button";
+            quitar.className = "miniatura-quitar";
+            quitar.setAttribute("aria-label", "Eliminar foto");
+            quitar.textContent = "×";
+            quitar.addEventListener("click", function () {
+                fotos.splice(i, 1);
+                pintarMiniaturas();
+            });
+            celda.appendChild(img);
+            celda.appendChild(quitar);
+            miniaturas.appendChild(celda);
+        });
+        btnTomar.disabled = fotos.length >= MAX;
+        if (fotos.length >= MAX) { mostrarError("Máximo " + MAX + " fotos."); }
+        else { limpiarError(); }
+    }
+
     function tomarFoto() {
-        if (!stream) { return; }
+        if (!stream || fotos.length >= MAX) { return; }
         var w = video.videoWidth, h = video.videoHeight;
         if (!w || !h) { return; }
         canvas.width = w;
         canvas.height = h;
         canvas.getContext("2d").drawImage(video, 0, 0, w, h);
-        var dataUrl = canvas.toDataURL("image/jpeg", 0.92);
-
-        campoData.value = dataUrl;          // se enviará al backend
-        preview.src = dataUrl;
-        preview.hidden = false;
-        video.hidden = true;
-        detenerCamara();                    // libera la cámara
-        btnTomar.hidden = true;
-        btnOtra.hidden = false;
+        fotos.push(canvas.toDataURL("image/jpeg", 0.9));   // se ACUMULA, no pisa
+        pintarMiniaturas();
     }
 
     btnTomar.addEventListener("click", tomarFoto);
-    btnOtra.addEventListener("click", function () {
-        campoData.value = "";
-        iniciarCamara();
-    });
 
-    // No dejar enviar sin foto tomada.
     form.addEventListener("submit", function (e) {
-        if (!campoData.value) {
+        if (fotos.length === 0) {
             e.preventDefault();
-            mostrarError("Toma una foto antes de guardar.");
+            mostrarError("Toma al menos una foto antes de guardar.");
+            return;
         }
+        campoData.value = JSON.stringify(fotos);   // se envían TODAS
     });
 
     iniciarCamara();

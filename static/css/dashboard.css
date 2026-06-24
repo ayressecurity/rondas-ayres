@@ -638,16 +638,28 @@ body.menu-abierto .menu-toggle span:nth-child(3) { transform: translateY(-7px) r
     max-width: 640px;
     border-top: 4px solid var(--rojo);
 }
-.img-modal-cuerpo {
-    display: flex;
-    justify-content: center;
+/* Grilla de imágenes del modal: responsive (1, 2, 3+ columnas). */
+.img-modal-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
     background: #f4f4f4;
     border: 1px solid var(--gris-borde);
     border-radius: 8px;
     padding: 10px;
     margin: 12px 0 16px;
+    max-height: 70vh;
+    overflow: auto;
 }
-.img-modal-cuerpo img { max-width: 100%; max-height: 70vh; border-radius: 4px; }
+.img-modal-grid.una-foto { grid-template-columns: 1fr; }
+.img-modal-grid img {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+    border-radius: 4px;
+    background: #fff;
+}
+.img-modal-grid.una-foto img { aspect-ratio: auto; max-height: 65vh; object-fit: contain; }
 
 /* Botón "Ver imagen" con apariencia de enlace de acción. */
 button.accion-imagen {
@@ -660,15 +672,70 @@ button.accion-imagen {
 
 /* ---------- Cámara de "Reportar novedad" ---------- */
 .camara-caja {
-    max-width: 420px;
+    width: 100%;
+    max-width: 480px;
     border: 1px solid var(--gris-borde);
     border-radius: 8px;
     overflow: hidden;
     background: #000;
     margin: 6px 0 10px;
+    aspect-ratio: 4 / 3;
 }
-.camara-video, .camara-preview { display: block; width: 100%; height: auto; }
-.camara-acciones { display: flex; gap: 10px; margin-bottom: 6px; }
+.camara-video { display: block; width: 100%; height: 100%; object-fit: cover; }
+.camara-acciones { display: flex; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+
+/* Miniaturas de fotos tomadas: grilla 3x3 responsive. */
+.miniaturas {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    max-width: 480px;
+    margin: 8px 0;
+}
+.miniatura { position: relative; }
+.miniatura img {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 1px solid var(--gris-borde);
+    display: block;
+}
+.miniatura-quitar {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(204, 51, 51, 0.92);
+    color: #fff;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* ===== Responsividad de las pantallas con cámara ===== */
+/* Centra los contenedores de cámara en escritorio. */
+.escaner-wrap, .camara-form { margin-left: auto; margin-right: auto; }
+
+@media (max-width: 600px) {
+    /* Botones grandes y cómodos en móvil para las acciones de cámara. */
+    .camara-acciones .btn,
+    .escaner-wrap .form-acciones .btn {
+        flex: 1 1 100%;
+        padding: 13px 16px;
+        font-size: 1rem;
+        text-align: center;
+    }
+    .miniaturas { gap: 6px; }
+    /* El lector de QR (escáner) ocupa todo el ancho disponible. */
+    .escaner-reader { width: 100%; }
+}
 
 /* Ícono de mapa en la acción de la tabla: alinea con el texto del enlace. */
 .accion-mapa { display: inline-flex; align-items: center; gap: 4px; }
