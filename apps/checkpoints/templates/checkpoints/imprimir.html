@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Imprimir QR — {{ instalacion_nombre }}</title>
+    <style>
+        :root { --rojo: #CC3333; --oscuro: #333333; --gris: #ccc; }
+        * { box-sizing: border-box; }
+        body {
+            font-family: "Exo", Arial, sans-serif;
+            margin: 0;
+            color: var(--oscuro);
+            background: #f3f3f3;
+        }
+
+        /* Barra de acciones (no se imprime). */
+        .barra {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 12px 18px;
+            background: var(--oscuro);
+            color: #fff;
+        }
+        .barra h1 { font-size: 1rem; margin: 0; font-weight: 600; }
+        .barra .sub { font-weight: 400; opacity: 0.85; }
+        .btn-imprimir {
+            background: var(--rojo);
+            color: #fff;
+            border: none;
+            padding: 9px 18px;
+            border-radius: 6px;
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .btn-imprimir:hover { background: #b32d2d; }
+
+        /* Hoja = una página: grilla 3 columnas x 3 filas (9 QR). */
+        .hoja {
+            background: #fff;
+            margin: 14px auto;
+            padding: 10mm;
+            width: 210mm;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-auto-rows: 1fr;
+            gap: 6mm;
+            box-shadow: 0 1px 6px rgba(0, 0, 0, 0.15);
+        }
+        .celda {
+            border: 1px dashed var(--gris);   /* guía de recorte */
+            border-radius: 6px;
+            padding: 6mm 4mm;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            break-inside: avoid;
+        }
+        .celda img {
+            width: 45mm;
+            height: 45mm;
+            image-rendering: pixelated;   /* QR nítido, sin difuminar al escalar */
+        }
+        .celda .nombre {
+            margin-top: 4mm;
+            font-weight: 600;
+            font-size: 0.95rem;
+            word-break: break-word;
+        }
+        .vacio { padding: 40px; text-align: center; color: #666; }
+
+        @page { size: A4; margin: 8mm; }
+        @media print {
+            body { background: #fff; }
+            .barra { display: none; }
+            .hoja {
+                margin: 0;
+                width: auto;
+                box-shadow: none;
+                padding: 0;
+                page-break-after: always;
+            }
+            .hoja:last-child { page-break-after: auto; }
+        }
+    </style>
+</head>
+<body>
+    <div class="barra">
+        <h1>Códigos QR — <span class="sub">{{ instalacion_nombre }}</span></h1>
+        <button type="button" class="btn-imprimir" onclick="window.print()">Imprimir</button>
+    </div>
+
+    {% for pagina in paginas %}
+        <section class="hoja">
+            {% for item in pagina %}
+                <div class="celda">
+                    <img src="{{ item.qr }}" alt="QR {{ item.nombre }}">
+                    <span class="nombre">{{ item.nombre }}</span>
+                </div>
+            {% endfor %}
+        </section>
+    {% empty %}
+        <p class="vacio">No hay puntos de control activos en esta instalación.</p>
+    {% endfor %}
+</body>
+</html>

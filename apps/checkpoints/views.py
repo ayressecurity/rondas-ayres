@@ -7,6 +7,7 @@ Seguridad: cada vista de detalle (editar/eliminar) verifica que el punto de
 control pertenezca a la instalacion de la sesion (si no, 404). instalacion_id y
 qr_token NUNCA vienen del formulario: los fija la vista.
 """
+import base64
 from io import BytesIO
 from uuid import uuid4
 
@@ -114,6 +115,32 @@ def qr(request, pk):
     if request.GET.get("descargar"):
         response["Content-Disposition"] = f'attachment; filename="qr-checkpoint-{cp.id}.png"'
     return response
+
+
+def _qr_data_uri(token):
+    """PNG del QR (contenido = qr_token) como data URI base64, para incrustarlo
+    en la hoja imprimible sin requests extra y con nitidez."""
+    img = qrcode.make(token, box_size=10, border=2)
+    buffer = BytesIO()
+    img.save(buffer, format="PNG")
+    b64 = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{b64}"
+
+
+@login_required
+@requiere_instalacion
+def imprimir(request):
+    """Hoja imprimible (grilla 3x3 = 9 por página) con los QR de los puntos de
+    control ACTIVOS de la instalación en sesión, cada uno con su nombre debajo."""
+    checkpoints = (
+        PuntoControl.objects
+        .filter(instalacion_id=request.session["instalacion_id"], activo=True)
+        .order_by("nombre")
+    )
+    items = [{"nombre": cp.nombre, "qr": _qr_data_uri(cp.qr_token)} for cp in checkpoints]
+    # Paginar de a 9 (3 columnas x 3 filas por hoja).
+    paginas = [items[i:i + 9] for i in range(0, len(items), 9)]
+    return render(request, "checkpoints/imprimir.html", {"paginas": paginas})
 
 
 @login_required
