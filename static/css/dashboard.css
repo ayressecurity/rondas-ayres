@@ -543,6 +543,22 @@ body.menu-abierto .menu-toggle span:nth-child(3) { transform: translateY(-7px) r
 }
 .opcion-check input { width: auto; accent-color: var(--rojo); }
 
+/* Numeración de orden por selección (Ronda estipulada). */
+.orden-badge:not(:empty) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    margin-left: 6px;
+    background: var(--rojo);
+    color: var(--blanco);
+    border-radius: 11px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
 /* ---------- Modal de QR ---------- */
 .qr-modal {
     position: fixed;

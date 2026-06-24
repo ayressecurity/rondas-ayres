@@ -38,23 +38,27 @@ def _ronda_de_la_instalacion(request, pk):
     )
 
 
-def _guardar_secuencia(ronda, puntos, orden_aleatorio):
-    """Reescribe la secuencia de la ronda con los puntos elegidos.
-
-    - aleatorio: barajamos y asignamos orden 1..n.
-    - a gusto del guardia: orden 0 para todos (no se exige orden en terreno).
-    """
+def _guardar_secuencia(ronda, puntos_en_orden):
+    """Reescribe la secuencia de la ronda asignando orden 1..n por posición."""
     ronda.rondasecuencia_set.all().delete()
-    puntos = list(puntos)
-    if orden_aleatorio:
-        random.shuffle(puntos)
-        filas = [
-            RondaSecuencia(ronda=ronda, punto_control=p, orden=i)
-            for i, p in enumerate(puntos, start=1)
-        ]
-    else:
-        filas = [RondaSecuencia(ronda=ronda, punto_control=p, orden=0) for p in puntos]
+    filas = [
+        RondaSecuencia(ronda=ronda, punto_control=p, orden=i)
+        for i, p in enumerate(puntos_en_orden, start=1)
+    ]
     RondaSecuencia.objects.bulk_create(filas)
+
+
+def _puntos_en_orden(form):
+    """Lista ordenada de checkpoints para la secuencia, según el modo elegido.
+
+    - aleatoria: TODOS los checkpoints activos de la instalación, barajados.
+    - estipulada: los seleccionados, en el orden marcado por el usuario.
+    """
+    if form.orden_aleatorio:
+        puntos = list(form.fields["puntos"].queryset)
+        random.shuffle(puntos)
+        return puntos
+    return form.puntos_ordenados()
 
 
 def _guardar_programacion(ronda, repite, horarios):
@@ -119,7 +123,7 @@ def nueva(request):
                 ronda.orden_aleatorio = form.orden_aleatorio
                 ronda.estado = EstadoGenerico.ACTIVA
                 ronda.save()
-                _guardar_secuencia(ronda, form.cleaned_data["puntos"], form.orden_aleatorio)
+                _guardar_secuencia(ronda, _puntos_en_orden(form))
                 _guardar_programacion(ronda, form.cleaned_data.get("repite"), form.horarios)
             messages.success(request, f"Ronda «{ronda.nombre}» creada.")
             return redirect("rondas:index")
@@ -143,7 +147,7 @@ def editar(request, pk):
                 ronda = form.save(commit=False)
                 ronda.orden_aleatorio = form.orden_aleatorio
                 ronda.save()
-                _guardar_secuencia(ronda, form.cleaned_data["puntos"], form.orden_aleatorio)
+                _guardar_secuencia(ronda, _puntos_en_orden(form))
                 _guardar_programacion(ronda, form.cleaned_data.get("repite"), form.horarios)
             messages.success(request, f"Ronda «{ronda.nombre}» actualizada.")
             return redirect("rondas:index")

@@ -38,11 +38,30 @@
     <h2 class="form-seccion">Checkpoints de la ronda</h2>
 
     <div class="campo-form">
-        <label>{{ form.puntos.label }} <span class="req">*</span></label>
+        <label>{{ form.modo_orden.label }}</label>
+        <div class="opciones-lista">
+            {% for radio in form.modo_orden %}
+                <label class="opcion-check">{{ radio.tag }} <span>{{ radio.choice_label }}</span></label>
+            {% endfor %}
+        </div>
+        {% for error in form.modo_orden.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+    </div>
+
+    {# Campo oculto: orden de selección (estipulada), lo mantiene el JS. #}
+    {{ form.orden_ids }}
+
+    {# Checklist: solo visible en "Ronda estipulada" (JS lo muestra/oculta). #}
+    <div class="campo-form" id="bloque-checklist" hidden>
+        <label>{{ form.puntos.label }} <span class="req">*</span>
+            <span class="campo-ayuda">Marca los checkpoints en el orden en que se recorrerán.</span>
+        </label>
         {% if form.puntos.field.queryset %}
-            <div class="opciones-lista">
+            <div class="opciones-lista" id="checklist-puntos">
                 {% for cb in form.puntos %}
-                    <label class="opcion-check">{{ cb.tag }} <span>{{ cb.choice_label }}</span></label>
+                    <label class="opcion-check" data-punto-item>
+                        {{ cb.tag }} <span class="opcion-texto">{{ cb.choice_label }}</span>
+                        <span class="orden-badge" data-orden></span>
+                    </label>
                 {% endfor %}
             </div>
         {% else %}
@@ -52,16 +71,6 @@
             </p>
         {% endif %}
         {% for error in form.puntos.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
-    </div>
-
-    <div class="campo-form">
-        <label>{{ form.modo_orden.label }}</label>
-        <div class="opciones-lista">
-            {% for radio in form.modo_orden %}
-                <label class="opcion-check">{{ radio.tag }} <span>{{ radio.choice_label }}</span></label>
-            {% endfor %}
-        </div>
-        {% for error in form.modo_orden.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
     </div>
 
     {# ---------- SECCIÓN 3 — Programación (opcional) ---------- #}
@@ -106,6 +115,61 @@
 
 {% block scripts %}
 <script>
+// Checklist condicional + numeración por selección (Ronda estipulada).
+(function () {
+    "use strict";
+    var radios = document.querySelectorAll('input[name="modo_orden"]');
+    var bloque = document.getElementById("bloque-checklist");
+    var lista = document.getElementById("checklist-puntos");
+    var hidden = document.getElementById("id_orden_ids");
+    if (!radios.length || !bloque) { return; }
+
+    function modoActual() {
+        var sel = document.querySelector('input[name="modo_orden"]:checked');
+        return sel ? sel.value : "";
+    }
+
+    // orden = ids (string) en el orden de selección.
+    var orden = (hidden && hidden.value) ? hidden.value.split(",").filter(Boolean) : [];
+
+    function checkboxes() {
+        return lista ? lista.querySelectorAll('input[type="checkbox"]') : [];
+    }
+
+    function sincronizar() {
+        // Conserva el orden previo; quita los desmarcados; agrega nuevos al final.
+        var marcados = [];
+        checkboxes().forEach(function (cb) { if (cb.checked) { marcados.push(cb.value); } });
+        orden = orden.filter(function (id) { return marcados.indexOf(id) !== -1; });
+        marcados.forEach(function (id) { if (orden.indexOf(id) === -1) { orden.push(id); } });
+    }
+
+    function pintar() {
+        checkboxes().forEach(function (cb) {
+            var item = cb.closest("[data-punto-item]");
+            var badge = item ? item.querySelector("[data-orden]") : null;
+            if (!badge) { return; }
+            var n = cb.checked ? orden.indexOf(cb.value) : -1;
+            badge.textContent = (n === -1) ? "" : (n + 1);
+        });
+        if (hidden) { hidden.value = orden.join(","); }
+    }
+
+    function toggleBloque() {
+        bloque.hidden = (modoActual() !== "estipulada");
+    }
+
+    radios.forEach(function (r) { r.addEventListener("change", toggleBloque); });
+    checkboxes().forEach(function (cb) {
+        cb.addEventListener("change", function () { sincronizar(); pintar(); });
+    });
+
+    // Init (incluye edición: checkboxes ya marcados + orden guardado).
+    sincronizar();
+    pintar();
+    toggleBloque();
+})();
+
 (function () {
     "use strict";
     var cont = document.getElementById("horarios");
