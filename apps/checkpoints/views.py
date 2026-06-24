@@ -141,8 +141,14 @@ def imprimir(request):
         .order_by("nombre")
     )
     items = [{"nombre": cp.nombre, "qr": _qr_data_uri(cp.qr_token)} for cp in checkpoints]
-    # Paginar de a 9 (3 columnas x 3 filas por hoja).
-    paginas = [items[i:i + 9] for i in range(0, len(items), 9)]
+    # Grilla FIJA de 4 columnas x 7 filas = 28 por hoja. Cada hoja muestra los 28
+    # slots (los sobrantes quedan vacíos pero visibles). Paginar de a 28.
+    por_hoja = 28
+    paginas = []
+    for i in range(0, len(items), por_hoja):
+        chunk = items[i:i + por_hoja]
+        chunk += [None] * (por_hoja - len(chunk))  # rellena hasta 28 con vacíos
+        paginas.append(chunk)
     return render(request, "checkpoints/imprimir.html", {"paginas": paginas})
 
 

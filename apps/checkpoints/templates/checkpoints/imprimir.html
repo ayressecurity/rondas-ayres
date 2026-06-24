@@ -42,36 +42,42 @@
         .hoja {
             background: #fff;
             margin: 14px auto;
-            padding: 10mm;
+            padding: 8mm;
             width: 210mm;
+            box-sizing: border-box;
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            grid-auto-rows: 1fr;
-            gap: 6mm;
+            grid-template-columns: repeat(4, 1fr);   /* 4 columnas */
+            grid-auto-rows: 36mm;                     /* 7 filas de 36mm = 4x7 por hoja */
+            gap: 3mm;
             box-shadow: 0 1px 6px rgba(0, 0, 0, 0.15);
         }
         .celda {
-            border: 1px dashed var(--gris);   /* guía de recorte */
-            border-radius: 6px;
-            padding: 6mm 4mm;
+            border: 1px dashed var(--gris);   /* guía de recorte (también en slots vacíos) */
+            border-radius: 5px;
+            padding: 2mm;
             text-align: center;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             break-inside: avoid;
+            overflow: hidden;
         }
         .celda img {
-            width: 35mm;                  /* ~1 cm más chico que antes (45 -> 35) */
-            height: 35mm;
+            width: 25mm;                  /* tamaño para que entren 28 nítidos en A4 */
+            height: 25mm;
             image-rendering: pixelated;   /* QR nítido, sin difuminar al escalar */
         }
         .celda .nombre {
-            margin-bottom: 3mm;           /* nombre ARRIBA del QR */
+            margin-bottom: 1.5mm;         /* nombre ARRIBA del QR */
             font-weight: 600;
-            font-size: 0.95rem;
+            font-size: 0.62rem;
+            line-height: 1.05;
             word-break: break-word;
+            max-height: 7mm;
+            overflow: hidden;
         }
+        .celda-vacia { background: #fafafa; }   /* slot sin QR: visible pero vacío */
         .vacio { padding: 40px; text-align: center; color: #666; }
 
         @page { size: A4; margin: 8mm; }
@@ -98,10 +104,14 @@
     {% for pagina in paginas %}
         <section class="hoja">
             {% for item in pagina %}
-                <div class="celda">
-                    <span class="nombre">{{ item.nombre }}</span>
-                    <img src="{{ item.qr }}" alt="QR {{ item.nombre }}">
-                </div>
+                {% if item %}
+                    <div class="celda">
+                        <span class="nombre">{{ item.nombre }}</span>
+                        <img src="{{ item.qr }}" alt="QR {{ item.nombre }}">
+                    </div>
+                {% else %}
+                    <div class="celda celda-vacia"></div>
+                {% endif %}
             {% endfor %}
         </section>
     {% empty %}
