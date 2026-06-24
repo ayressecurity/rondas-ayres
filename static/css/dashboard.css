@@ -685,6 +685,35 @@ body.menu-abierto .menu-toggle span:nth-child(3) { transform: translateY(-7px) r
 .geo-ok { color: #2e7d32; font-weight: 600; white-space: nowrap; }
 .geo-fuera { color: var(--rojo); font-weight: 600; white-space: nowrap; }
 
+/* Filtros de fecha de los informes. */
+.filtros-informe {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding: 14px 16px;
+    background: var(--blanco);
+    border: 1px solid var(--gris-borde);
+    border-radius: 8px;
+}
+.filtro-campo { display: flex; flex-direction: column; gap: 4px; }
+.filtro-campo label { font-size: 0.8rem; font-weight: 600; color: var(--oscuro); }
+.filtro-campo select,
+.filtro-campo input {
+    padding: 7px 9px;
+    border: 1px solid var(--gris-borde);
+    border-radius: 6px;
+    font: inherit;
+    color: var(--oscuro);
+    background: var(--blanco);
+}
+.filtro-campo select:focus,
+.filtro-campo input:focus { outline: none; border-color: var(--rojo); }
+.filtro-acciones { display: flex; gap: 8px; }
+.filtro-resumen { color: #555; margin: 0 0 16px; }
+.filtro-ayuda { color: #999; font-size: 0.82rem; }
+
 /* Confirmación de borrado. */
 .confirmar-eliminar {
     background: var(--blanco);

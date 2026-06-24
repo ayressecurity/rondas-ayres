@@ -1,60 +1,162 @@
 """
 BASE COMÚN de los informes del libro de novedades (solo lectura).
 
-Los informes (Rondas, Novedades, ...) comparten la MISMA estructura: listan
+Los informes (Rondas, Novedades, ...) comparten estructura: listan
 `libro_novedades` de la instalación seleccionada, ordenado de más reciente a más
-antiguo. Lo único que cambia entre informes es el FILTRO por tipo_evento.
+antiguo, con filtro por tipo_evento (aplica_filtro) y filtro por fechas (GET).
 
-`render_informe` centraliza la consulta + el render; cada informe concreto solo
-pasa su `titulo` y una función `aplica_filtro(qs) -> qs`.
-
-Zona horaria: el template formatea timestamp_evento con el filtro `date`, que
-convierte el datetime aware a la zona activa (TIME_ZONE = America/Santiago).
+Zona horaria: todo en America/Santiago (TIME_ZONE). Los rangos de fecha se
+construyen aware en Santiago para filtrar timestamp_evento correctamente.
 """
+from datetime import date, datetime, time, timedelta
+
 from django.contrib.auth import get_user_model
+from django.db.models import CharField, Value
+from django.db.models.functions import Cast, Lower, Replace
 from django.shortcuts import render
+from django.urls import reverse
+from django.utils import timezone
 
 from apps.novedades.models import LibroNovedades
 
+ANIO_BASE = 2026
+MESES = [
+    (1, "Enero"), (2, "Febrero"), (3, "Marzo"), (4, "Abril"),
+    (5, "Mayo"), (6, "Junio"), (7, "Julio"), (8, "Agosto"),
+    (9, "Septiembre"), (10, "Octubre"), (11, "Noviembre"), (12, "Diciembre"),
+]
+
+
+def _norm(kc):
+    """Normaliza un keycloak_id para comparar: sin guiones, en minúsculas."""
+    return (kc or "").replace("-", "").lower()
+
 
 def _nombres_de_guardias(eventos):
-    """Mapa keycloak_id -> "first_name last_name" para los guardias de `eventos`.
+    """Mapa keycloak_id_normalizado -> 'first_name last_name' de los guardias.
 
-    Precarga en UNA sola consulta (evita N+1). Solo incluye al usuario si tiene
-    nombre; el fallback al UUID se resuelve por fila al asignar guardia_nombre.
+    cuentas_usuario.keycloak_id va SIN guiones y libro_novedades.guardia_keycloak_id
+    CON guiones; por eso se normaliza (sin guiones, minúsculas) en AMBOS lados.
+    Una sola consulta (sin N+1).
     """
-    ids = {ev.guardia_keycloak_id for ev in eventos if ev.guardia_keycloak_id}
-    if not ids:
+    requeridos = {_norm(ev.guardia_keycloak_id) for ev in eventos if ev.guardia_keycloak_id}
+    if not requeridos:
         return {}
     Usuario = get_user_model()
+    # keycloak_id es UUIDField (se guarda sin guiones); lo pasamos a texto, le
+    # quitamos guiones (no tiene) y lo bajamos a minúsculas para igualar al lado
+    # del libro (CharField CON guiones, ya normalizado en `requeridos`).
+    kc_texto = Cast("keycloak_id", output_field=CharField())
+    filas = (
+        Usuario.objects
+        .annotate(kc_norm=Lower(Replace(kc_texto, Value("-"), Value(""), output_field=CharField())))
+        .filter(kc_norm__in=requeridos)
+        .values_list("kc_norm", "first_name", "last_name")
+    )
     nombres = {}
-    for u in Usuario.objects.filter(keycloak_id__in=ids).values_list(
-        "keycloak_id", "first_name", "last_name"
-    ):
-        keycloak_id, first, last = u
+    for kc_norm, first, last in filas:
         nombre = f"{first or ''} {last or ''}".strip()
         if nombre:
-            nombres[keycloak_id] = nombre
+            nombres[kc_norm] = nombre
     return nombres
 
 
-def render_informe(request, *, titulo, aplica_filtro):
-    """Lista libro_novedades de la instalación en sesión aplicando `aplica_filtro`.
+def anios_disponibles():
+    """Años seleccionables: 2026 hasta el año actual (Santiago). Crece solo."""
+    actual = timezone.localtime(timezone.now()).year
+    return list(range(ANIO_BASE, max(actual, ANIO_BASE) + 1))
 
-    Asume contexto de instalación garantizado por @requiere_instalacion en la
-    vista que llama (instalacion_id presente en la sesión).
+
+def _aware(d, t=time.min):
+    """datetime aware en la zona activa (Santiago) desde fecha (+ hora)."""
+    return timezone.make_aware(datetime.combine(d, t))
+
+
+def _rango_y_label(request):
+    """Lee los filtros de fecha del GET -> (rango, etiqueta, valores).
+
+    rango = (inicio, fin) aware en Santiago, o None (sin filtro = todo).
+    Precedencia: día > semana > mes(+año) > año. valores repinta el formulario.
     """
-    eventos = (
+    g = request.GET
+    dia = (g.get("dia") or "").strip()
+    semana = (g.get("semana") or "").strip()
+    mes = (g.get("mes") or "").strip()
+    anio = (g.get("anio") or "").strip()
+    valores = {"dia": dia, "semana": semana, "mes": mes, "anio": anio}
+
+    if dia:  # día exacto (YYYY-MM-DD)
+        try:
+            d = date.fromisoformat(dia)
+            return (_aware(d), _aware(d + timedelta(days=1))), f"Día {d.isoformat()}", valores
+        except ValueError:
+            pass
+
+    if semana:  # semana ISO (YYYY-Www)
+        try:
+            anio_s, sem_s = semana.split("-W")
+            lunes = date.fromisocalendar(int(anio_s), int(sem_s), 1)
+            domingo = lunes + timedelta(days=6)
+            etiqueta = f"Semana {semana} ({lunes.isoformat()} a {domingo.isoformat()})"
+            return (_aware(lunes), _aware(lunes + timedelta(days=7))), etiqueta, valores
+        except (ValueError, TypeError):
+            pass
+
+    if anio and mes:  # mes + año
+        try:
+            a, m = int(anio), int(mes)
+            inicio = date(a, m, 1)
+            fin = date(a + 1, 1, 1) if m == 12 else date(a, m + 1, 1)
+            return (_aware(inicio), _aware(fin)), f"{dict(MESES)[m]} {a}", valores
+        except (ValueError, KeyError):
+            pass
+
+    if anio:  # año completo
+        try:
+            a = int(anio)
+            return (_aware(date(a, 1, 1)), _aware(date(a + 1, 1, 1))), f"Año {a}", valores
+        except ValueError:
+            pass
+
+    return None, "Todos", valores
+
+
+def eventos_filtrados(request, aplica_filtro):
+    """Eventos de la instalación en sesión con filtro de tipo + filtro de fechas.
+
+    Devuelve (eventos, rango, etiqueta, valores). Cada evento queda con
+    .guardia_nombre resuelto (nombre del usuario o, si no hay, el UUID).
+    """
+    rango, etiqueta, valores = _rango_y_label(request)
+    qs = (
         LibroNovedades.objects
         .filter(instalacion_id=request.session["instalacion_id"])
         .select_related("tipo_evento", "punto_control")
         .order_by("-timestamp_evento")
     )
-    eventos = list(aplica_filtro(eventos))
+    qs = aplica_filtro(qs)
+    if rango:
+        qs = qs.filter(timestamp_evento__gte=rango[0], timestamp_evento__lt=rango[1])
+    eventos = list(qs)
 
-    # Nombre del guardia desde cuentas.Usuario (por keycloak_id); fallback al UUID.
     nombres = _nombres_de_guardias(eventos)
     for ev in eventos:
-        ev.guardia_nombre = nombres.get(ev.guardia_keycloak_id) or ev.guardia_keycloak_id or "—"
+        ev.guardia_nombre = nombres.get(_norm(ev.guardia_keycloak_id)) or ev.guardia_keycloak_id or "—"
+    return eventos, rango, etiqueta, valores
 
-    return render(request, "informes/informe.html", {"titulo": titulo, "eventos": eventos})
+
+def render_informe(request, *, titulo, aplica_filtro, export_url=None):
+    """Renderiza el informe (tabla + filtros). export_url = nombre de ruta de
+    exportación a Excel (opcional)."""
+    eventos, _rango, etiqueta, valores = eventos_filtrados(request, aplica_filtro)
+    contexto = {
+        "titulo": titulo,
+        "eventos": eventos,
+        "anios": anios_disponibles(),
+        "meses": MESES,
+        "filtro": valores,
+        "filtro_label": etiqueta,
+        "export_url": reverse(export_url) if export_url else None,
+        "query_actual": request.GET.urlencode(),
+    }
+    return render(request, "informes/informe.html", contexto)

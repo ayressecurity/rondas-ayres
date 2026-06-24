@@ -14,8 +14,11 @@ class PuntoControl(models.Model):
     tipo = models.CharField(max_length=40, default=TIPO_QR, null=True, blank=True)
     nombre = models.CharField(max_length=120)
     observacion = models.TextField(null=True, blank=True)
-    lat = models.DecimalField(max_digits=10, decimal_places=8)
-    lng = models.DecimalField(max_digits=11, decimal_places=8)
+    # Coordenadas amplias: aceptan valores muy largos (muchos decimales) sin
+    # recortar, y también cortos. 18 dígitos / 12 decimales cubre cualquier
+    # coordenada real con sobra (6 dígitos enteros + 12 decimales).
+    lat = models.DecimalField(max_digits=18, decimal_places=12)
+    lng = models.DecimalField(max_digits=18, decimal_places=12)
     tolerancia_mts = models.SmallIntegerField(default=30)
     validar_posicion = models.BooleanField(default=True)  # 0 = no validar arribo
     foto_path = models.CharField(max_length=255, null=True, blank=True)

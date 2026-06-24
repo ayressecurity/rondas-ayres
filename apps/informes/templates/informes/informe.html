@@ -8,7 +8,49 @@
         <h1>{{ titulo }}</h1>
         <p class="contexto-instalacion">Instalación: <strong>{{ instalacion_nombre }}</strong></p>
     </div>
+    {% if export_url %}
+    <div class="cabecera-acciones">
+        {# El export respeta el filtro actual (mismos parámetros del GET). #}
+        <a href="{{ export_url }}{% if query_actual %}?{{ query_actual }}{% endif %}" class="btn btn-primario">Exportar a Excel</a>
+    </div>
+    {% endif %}
 </div>
+
+{# ---------- Filtros de fecha (GET) ---------- #}
+<form method="get" class="filtros-informe">
+    <div class="filtro-campo">
+        <label for="f-anio">Año</label>
+        <select id="f-anio" name="anio">
+            <option value="">Todos</option>
+            {% for a in anios %}
+                <option value="{{ a }}" {% if filtro.anio == a|stringformat:'s' %}selected{% endif %}>{{ a }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="filtro-campo">
+        <label for="f-mes">Mes</label>
+        <select id="f-mes" name="mes">
+            <option value="">Todos</option>
+            {% for num, nombre in meses %}
+                <option value="{{ num }}" {% if filtro.mes == num|stringformat:'s' %}selected{% endif %}>{{ nombre }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="filtro-campo">
+        <label for="f-semana">Semana</label>
+        <input type="week" id="f-semana" name="semana" value="{{ filtro.semana }}">
+    </div>
+    <div class="filtro-campo">
+        <label for="f-dia">Día exacto</label>
+        <input type="date" id="f-dia" name="dia" value="{{ filtro.dia }}">
+    </div>
+    <div class="filtro-acciones">
+        <button type="submit" class="btn btn-primario">Filtrar</button>
+        <a href="{{ request.path }}" class="btn btn-secundario">Limpiar</a>
+    </div>
+</form>
+<p class="filtro-resumen">Mostrando: <strong>{{ filtro_label }}</strong>
+    <span class="filtro-ayuda">(precedencia: día → semana → mes+año → año)</span></p>
 
 {% if eventos %}
 <div class="tabla-scroll">
@@ -59,7 +101,11 @@
 </div>
 {% else %}
 <div class="estado-vacio">
-    <p>Aún no hay eventos registrados en esta instalación.</p>
+    {% if filtro_label != "Todos" %}
+        <p>No hay eventos para «{{ filtro_label }}» en esta instalación.</p>
+    {% else %}
+        <p>Aún no hay eventos registrados en esta instalación.</p>
+    {% endif %}
 </div>
 {% endif %}
 {% endblock %}
