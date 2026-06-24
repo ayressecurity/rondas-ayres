@@ -11,11 +11,14 @@ construyen aware en Santiago para filtrar timestamp_evento correctamente.
 from datetime import date, datetime, time, timedelta
 
 from django.contrib.auth import get_user_model
+from django.core.paginator import Paginator
 from django.db.models import CharField, Value
 from django.db.models.functions import Cast, Lower, Replace
 from django.shortcuts import render
 from django.urls import reverse
 from django.utils import timezone
+
+POR_PAGINA = 20
 
 from apps.novedades.models import LibroNovedades
 
@@ -76,14 +79,16 @@ def _rango_y_label(request):
     """Lee los filtros de fecha del GET -> (rango, etiqueta, valores).
 
     rango = (inicio, fin) aware en Santiago, o None (sin filtro = todo).
-    Precedencia: día > semana > mes(+año) > año. valores repinta el formulario.
+    Precedencia: día > rango libre (desde/hasta) > mes(+año) > año.
+    valores repinta el formulario.
     """
     g = request.GET
     dia = (g.get("dia") or "").strip()
-    semana = (g.get("semana") or "").strip()
+    fini = (g.get("fini") or "").strip()   # fecha inicio del rango
+    ffin = (g.get("ffin") or "").strip()   # fecha fin del rango
     mes = (g.get("mes") or "").strip()
     anio = (g.get("anio") or "").strip()
-    valores = {"dia": dia, "semana": semana, "mes": mes, "anio": anio}
+    valores = {"dia": dia, "fini": fini, "ffin": ffin, "mes": mes, "anio": anio}
 
     if dia:  # día exacto (YYYY-MM-DD)
         try:
@@ -92,14 +97,15 @@ def _rango_y_label(request):
         except ValueError:
             pass
 
-    if semana:  # semana ISO (YYYY-Www)
+    if fini and ffin:  # rango libre [desde, hasta] (ambos inclusive)
         try:
-            anio_s, sem_s = semana.split("-W")
-            lunes = date.fromisocalendar(int(anio_s), int(sem_s), 1)
-            domingo = lunes + timedelta(days=6)
-            etiqueta = f"Semana {semana} ({lunes.isoformat()} a {domingo.isoformat()})"
-            return (_aware(lunes), _aware(lunes + timedelta(days=7))), etiqueta, valores
-        except (ValueError, TypeError):
+            d1 = date.fromisoformat(fini)
+            d2 = date.fromisoformat(ffin)
+            if d1 > d2:
+                d1, d2 = d2, d1  # tolera fechas invertidas
+            etiqueta = f"{d1.isoformat()} a {d2.isoformat()}"
+            return (_aware(d1), _aware(d2 + timedelta(days=1))), etiqueta, valores
+        except ValueError:
             pass
 
     if anio and mes:  # mes + año
@@ -146,17 +152,26 @@ def eventos_filtrados(request, aplica_filtro):
 
 
 def render_informe(request, *, titulo, aplica_filtro, export_url=None):
-    """Renderiza el informe (tabla + filtros). export_url = nombre de ruta de
-    exportación a Excel (opcional)."""
+    """Renderiza el informe (tabla + filtros + paginador). export_url = nombre de
+    ruta de exportación a Excel (opcional)."""
     eventos, _rango, etiqueta, valores = eventos_filtrados(request, aplica_filtro)
+
+    # Paginación de a 20, respetando el filtro (se pagina el resultado filtrado).
+    page_obj = Paginator(eventos, POR_PAGINA).get_page(request.GET.get("page"))
+
+    # Querystring del filtro SIN 'page' (para los enlaces del paginador y export).
+    params = request.GET.copy()
+    params.pop("page", None)
+    query_sin_page = params.urlencode()
+
     contexto = {
         "titulo": titulo,
-        "eventos": eventos,
+        "page_obj": page_obj,
         "anios": anios_disponibles(),
         "meses": MESES,
         "filtro": valores,
         "filtro_label": etiqueta,
         "export_url": reverse(export_url) if export_url else None,
-        "query_actual": request.GET.urlencode(),
+        "query_sin_page": query_sin_page,
     }
     return render(request, "informes/informe.html", contexto)

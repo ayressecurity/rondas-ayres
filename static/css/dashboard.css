@@ -148,7 +148,7 @@ body.menu-abierto .menu-toggle span:nth-child(3) { transform: translateY(-7px) r
 /* Contexto de instalación arriba de cada módulo. */
 .contexto-instalacion {
     color: #666;
-    margin-top: -4px;
+    margin: 0;
 }
 
 .badge-activa {
@@ -414,7 +414,14 @@ body.menu-abierto .menu-toggle span:nth-child(3) { transform: translateY(-7px) r
     flex-wrap: wrap;
     margin-bottom: 18px;
 }
-.modulo-cabecera h1 { margin-bottom: 2px; }
+/* Título + "Instalación: X" en UNA sola línea (envoltura del título). */
+.modulo-cabecera > div:first-child {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+.modulo-cabecera h1 { margin: 0; }
 .cabecera-acciones { display: flex; gap: 10px; flex-wrap: wrap; }
 
 /* Estado vacío on-brand (sin registros que mostrar). */
@@ -713,6 +720,21 @@ body.menu-abierto .menu-toggle span:nth-child(3) { transform: translateY(-7px) r
 .filtro-acciones { display: flex; gap: 8px; }
 .filtro-resumen { color: #555; margin: 0 0 16px; }
 .filtro-ayuda { color: #999; font-size: 0.82rem; }
+
+/* Paginador de los informes. */
+.paginador {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    margin: 16px 0 4px;
+}
+.paginador-texto { color: var(--oscuro); font-weight: 600; }
+.btn-deshabilitado {
+    opacity: 0.5;
+    cursor: default;
+    pointer-events: none;
+}
 
 /* Confirmación de borrado. */
 .confirmar-eliminar {

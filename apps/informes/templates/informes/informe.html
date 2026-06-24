@@ -10,8 +10,8 @@
     </div>
     {% if export_url %}
     <div class="cabecera-acciones">
-        {# El export respeta el filtro actual (mismos parámetros del GET). #}
-        <a href="{{ export_url }}{% if query_actual %}?{{ query_actual }}{% endif %}" class="btn btn-primario">Exportar a Excel</a>
+        {# El export respeta el filtro actual (mismos parámetros, sin 'page'). #}
+        <a href="{{ export_url }}{% if query_sin_page %}?{{ query_sin_page }}{% endif %}" class="btn btn-primario">Exportar a Excel</a>
     </div>
     {% endif %}
 </div>
@@ -37,8 +37,12 @@
         </select>
     </div>
     <div class="filtro-campo">
-        <label for="f-semana">Semana</label>
-        <input type="week" id="f-semana" name="semana" value="{{ filtro.semana }}">
+        <label for="f-fini">Desde</label>
+        <input type="date" id="f-fini" name="fini" value="{{ filtro.fini }}">
+    </div>
+    <div class="filtro-campo">
+        <label for="f-ffin">Hasta</label>
+        <input type="date" id="f-ffin" name="ffin" value="{{ filtro.ffin }}">
     </div>
     <div class="filtro-campo">
         <label for="f-dia">Día exacto</label>
@@ -50,9 +54,9 @@
     </div>
 </form>
 <p class="filtro-resumen">Mostrando: <strong>{{ filtro_label }}</strong>
-    <span class="filtro-ayuda">(precedencia: día → semana → mes+año → año)</span></p>
+    <span class="filtro-ayuda">(precedencia: día → rango → mes+año → año)</span></p>
 
-{% if eventos %}
+{% if page_obj.object_list %}
 <div class="tabla-scroll">
     <table class="tabla-objetivos">
         <thead>
@@ -67,7 +71,7 @@
             </tr>
         </thead>
         <tbody>
-            {% for ev in eventos %}
+            {% for ev in page_obj %}
                 <tr class="fila-objetivo">
                     {# date: convierte el datetime aware a la zona activa (Santiago), sin decimales. #}
                     <td data-col="Fecha/Hora">{{ ev.timestamp_evento|date:"Y-m-d H:i:s" }}</td>
@@ -77,7 +81,6 @@
                     <td data-col="Coordenadas">
                         {% if ev.lat is not None and ev.lng is not None %}
                             {# stringformat:'s' = str del Decimal: punto decimal y precisión completa (sin localizar). #}
-                            {# PENDIENTE: a futuro, mapa embebido con Google Maps API key (por ahora solo link). #}
                             <a href="https://www.google.com/maps?q={{ ev.lat|stringformat:'s' }},{{ ev.lng|stringformat:'s' }}"
                                class="accion-link" target="_blank" rel="noopener">Ver mapa</a>
                         {% else %}—{% endif %}
@@ -99,6 +102,21 @@
         </tbody>
     </table>
 </div>
+
+{# ---------- Paginador (20 por página) ---------- #}
+<nav class="paginador" aria-label="Paginación">
+    {% if page_obj.has_previous %}
+        <a class="btn btn-secundario" href="?{% if query_sin_page %}{{ query_sin_page }}&{% endif %}page={{ page_obj.previous_page_number }}">Anterior</a>
+    {% else %}
+        <span class="btn btn-secundario btn-deshabilitado">Anterior</span>
+    {% endif %}
+    <span class="paginador-texto">Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>
+    {% if page_obj.has_next %}
+        <a class="btn btn-secundario" href="?{% if query_sin_page %}{{ query_sin_page }}&{% endif %}page={{ page_obj.next_page_number }}">Siguiente</a>
+    {% else %}
+        <span class="btn btn-secundario btn-deshabilitado">Siguiente</span>
+    {% endif %}
+</nav>
 {% else %}
 <div class="estado-vacio">
     {% if filtro_label != "Todos" %}

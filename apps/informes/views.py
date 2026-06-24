@@ -45,6 +45,7 @@ def informe_novedades(request):
         request,
         titulo="Informe de Novedades",
         aplica_filtro=_filtro_novedades,
+        export_url="informes:exportar_novedades",
     )
 
 
@@ -70,23 +71,26 @@ def _geocerca_texto(ev):
     return "—"
 
 
-@login_required
-@requiere_instalacion
-def exportar_rondas(request):
-    """Exporta el Informe de Rondas a .xlsx respetando instalación + fechas."""
-    eventos, _rango, etiqueta, _valores = eventos_filtrados(request, _filtro_rondas)
+# Color de hipervínculo de Excel (azul estándar).
+AZUL_LINK = "0563C1"
+
+
+def _exportar_excel(request, *, titulo, aplica_filtro, slug_base):
+    """Genera el .xlsx del informe respetando instalación + filtro de fechas.
+    La columna Coordenadas va como HIPERVÍNCULO a Google Maps (clickeable)."""
+    eventos, _rango, etiqueta, _valores = eventos_filtrados(request, aplica_filtro)
     instalacion = request.session.get("instalacion_nombre") or "instalacion"
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "Informe de Rondas"
+    ws.title = titulo[:31]  # Excel limita el nombre de hoja a 31 chars
 
     # Título (fila 1, combinada) con instalación y rango de fechas filtrado.
     n_cols = len(COLUMNAS)
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n_cols)
-    titulo = ws.cell(row=1, column=1, value=f"Informe de Rondas — {instalacion} — {etiqueta}")
-    titulo.font = Font(bold=True, size=13, color=ROJO_MARCA)
-    titulo.alignment = Alignment(horizontal="left", vertical="center")
+    celda_titulo = ws.cell(row=1, column=1, value=f"{titulo} — {instalacion} — {etiqueta}")
+    celda_titulo.font = Font(bold=True, size=13, color=ROJO_MARCA)
+    celda_titulo.alignment = Alignment(horizontal="left", vertical="center")
 
     # Encabezados (fila 2): negrita, fondo rojo de marca, texto blanco.
     relleno = PatternFill(start_color=ROJO_MARCA, end_color=ROJO_MARCA, fill_type="solid")
@@ -103,28 +107,32 @@ def exportar_rondas(request):
     # Datos.
     fila = fila_encabezado + 1
     for ev in eventos:
-        coords = "—"
+        ws.cell(row=fila, column=1,
+                value=timezone.localtime(ev.timestamp_evento).strftime("%Y-%m-%d %H:%M:%S"))
+        ws.cell(row=fila, column=2, value=ev.tipo_evento.nombre)
+        ws.cell(row=fila, column=3, value=ev.punto_control.nombre if ev.punto_control else "—")
+        ws.cell(row=fila, column=4, value=ev.guardia_nombre)
+
+        # Coordenadas como hipervínculo a Google Maps (igual que "Ver mapa").
+        celda_coord = ws.cell(row=fila, column=5)
         if ev.lat is not None and ev.lng is not None:
-            coords = f"{ev.lat}, {ev.lng}"  # str del Decimal: punto decimal, completo
-        distancia = float(ev.distancia_metros) if ev.distancia_metros is not None else "—"
-        valores = [
-            timezone.localtime(ev.timestamp_evento).strftime("%Y-%m-%d %H:%M:%S"),
-            ev.tipo_evento.nombre,
-            ev.punto_control.nombre if ev.punto_control else "—",
-            ev.guardia_nombre,
-            coords,
-            distancia,
-            _geocerca_texto(ev),
-            ev.texto or "—",
-        ]
-        for col, valor in enumerate(valores, start=1):
-            ws.cell(row=fila, column=col, value=valor)
+            url = f"https://www.google.com/maps?q={ev.lat},{ev.lng}"  # punto decimal, completo
+            celda_coord.value = "Ver mapa"
+            celda_coord.hyperlink = url
+            celda_coord.font = Font(color=AZUL_LINK, underline="single")
+        else:
+            celda_coord.value = "—"
+
+        ws.cell(row=fila, column=6,
+                value=float(ev.distancia_metros) if ev.distancia_metros is not None else "—")
+        ws.cell(row=fila, column=7, value=_geocerca_texto(ev))
+        ws.cell(row=fila, column=8, value=ev.texto or "—")
         fila += 1
 
     ws.freeze_panes = "A3"  # fija título + encabezado al hacer scroll
 
     hoy = timezone.localtime(timezone.now()).date().isoformat()
-    nombre_archivo = f"informe_rondas_{slugify(instalacion)}_{hoy}.xlsx"
+    nombre_archivo = f"{slug_base}_{slugify(instalacion)}_{hoy}.xlsx"
 
     resp = HttpResponse(
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -132,3 +140,21 @@ def exportar_rondas(request):
     resp["Content-Disposition"] = f'attachment; filename="{nombre_archivo}"'
     wb.save(resp)
     return resp
+
+
+@login_required
+@requiere_instalacion
+def exportar_rondas(request):
+    """Exporta el Informe de Rondas a .xlsx respetando instalación + fechas."""
+    return _exportar_excel(
+        request, titulo="Informe de Rondas", aplica_filtro=_filtro_rondas, slug_base="informe_rondas"
+    )
+
+
+@login_required
+@requiere_instalacion
+def exportar_novedades(request):
+    """Exporta el Informe de Novedades a .xlsx respetando instalación + fechas."""
+    return _exportar_excel(
+        request, titulo="Informe de Novedades", aplica_filtro=_filtro_novedades, slug_base="informe_novedades"
+    )
