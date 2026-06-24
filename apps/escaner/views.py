@@ -10,6 +10,7 @@ progreso X/Y. Al completar todos los puntos, la ejecución pasa a 'completada'.
 Conserva el registro existente en libro_novedades (arribo / arribo_invalido /
 arribo_sin_geo, distancia haversine, lat/lng, observación, timestamps, guardia).
 """
+from datetime import datetime, timedelta
 from decimal import Decimal
 from math import asin, cos, radians, sin, sqrt
 
@@ -77,6 +78,30 @@ def _ronda_para_ahora(instalacion_id):
     return None
 
 
+def _aware(fecha, hora):
+    """datetime aware en la zona activa (Santiago) a partir de fecha + hora."""
+    return timezone.make_aware(datetime.combine(fecha, hora))
+
+
+def _ventana_turno(ronda, ref):
+    """Ventana [inicio, fin] (datetimes reales) del turno que contiene `ref`.
+
+    Maneja el cruce de medianoche: si el rango cruza (inicio > fin) y `ref` es de
+    madrugada (antes del fin), el inicio del turno fue AYER. None si la ronda no
+    tiene rango horario. `ref` es un datetime aware.
+    """
+    if ronda.hora_inicio is None or ronda.hora_fin is None:
+        return None
+    ref = timezone.localtime(ref)
+    hoy = ref.date()
+    ini, fin = ronda.hora_inicio, ronda.hora_fin
+    if ini <= fin:
+        return _aware(hoy, ini), _aware(hoy, fin)
+    if ref.time() >= ini:  # noche, aún del mismo día -> fin es mañana
+        return _aware(hoy, ini), _aware(hoy + timedelta(days=1), fin)
+    return _aware(hoy - timedelta(days=1), ini), _aware(hoy, fin)  # madrugada -> inicio ayer
+
+
 def _ejecucion_en_curso(guardia_keycloak_id):
     """Última ronda_ejecucion en curso del guardia (o None)."""
     return (
@@ -87,13 +112,14 @@ def _ejecucion_en_curso(guardia_keycloak_id):
     )
 
 
-def _estado_ejecucion(ejecucion):
-    """Progreso de la ejecución: puntos en orden + cuáles ya se escanearon.
+def _estado_ejecucion(ejecucion, ventana):
+    """Progreso de la ejecución dentro de la VENTANA del turno: puntos en orden +
+    cuáles ya escaneó ESE guardia para ESA ronda dentro de [inicio, fin].
 
-    total = puntos en ronda_secuencia de la ronda.
-    escaneados = puntos DISTINTOS de la ronda ya registrados por el guardia desde
-    iniciada_en. Devuelve la lista de puntos en el ORDEN guardado (orden).
+    total = puntos en ronda_secuencia. escaneados = puntos DISTINTOS registrados
+    por el guardia en la ventana (se lee de libro_novedades, no de la sesión).
     """
+    inicio, fin = ventana
     secuencia = (
         RondaSecuencia.objects
         .filter(ronda_id=ejecucion.ronda_id)
@@ -106,7 +132,8 @@ def _estado_ejecucion(ejecucion):
         .filter(
             ronda_id=ejecucion.ronda_id,
             guardia_keycloak_id=ejecucion.guardia_keycloak_id,
-            timestamp_servidor__gte=ejecucion.iniciada_en,
+            timestamp_servidor__gte=inicio,
+            timestamp_servidor__lte=fin,
             punto_control_id__in=punto_ids,
         )
         .values_list("punto_control_id", flat=True)
@@ -148,13 +175,32 @@ def iniciar(request):
         return JsonResponse({"ok": False, "error": "No hay ronda activa en este horario."}, status=404)
 
     keycloak_id = getattr(request.user, "keycloak_id", "") or ""
-    ejecucion = RondaEjecucion.objects.create(
-        ronda=ronda,
-        guardia_keycloak_id=keycloak_id,
-        instalacion_id=instalacion_id,
-        estado=RondaEjecucion.Estado.EN_CURSO,
+    ventana = _ventana_turno(ronda, timezone.now())
+    inicio, fin = ventana
+
+    # Reutilizar la ejecución del MISMO guardia + MISMA ronda iniciada dentro de
+    # la ventana del turno actual (retoma el progreso); si no hay, crear una.
+    ejecucion = (
+        RondaEjecucion.objects
+        .filter(
+            ronda=ronda,
+            guardia_keycloak_id=keycloak_id,
+            estado=RondaEjecucion.Estado.EN_CURSO,
+            iniciada_en__gte=inicio,
+            iniciada_en__lte=fin,
+        )
+        .order_by("-iniciada_en")
+        .first()
     )
-    estado = _estado_ejecucion(ejecucion)
+    if ejecucion is None:
+        ejecucion = RondaEjecucion.objects.create(
+            ronda=ronda,
+            guardia_keycloak_id=keycloak_id,
+            instalacion_id=instalacion_id,
+            estado=RondaEjecucion.Estado.EN_CURSO,
+        )
+
+    estado = _estado_ejecucion(ejecucion, ventana)
     return JsonResponse({
         "ok": True,
         "ronda": ronda.nombre,
@@ -190,8 +236,10 @@ def registrar(request):
     ahora = timezone.now()
 
     # Ejecución en curso (si la hay): sus escaneos se etiquetan con su ronda_id.
+    # La ventana del turno se ancla a cuándo se inició esa ejecución.
     ejecucion = _ejecucion_en_curso(keycloak_id)
     ronda_id_evento = ejecucion.ronda_id if ejecucion else None
+    ventana = _ventana_turno(ejecucion.ronda, ejecucion.iniciada_en) if ejecucion else None
 
     cp = PuntoControl.objects.filter(qr_token=qr_token, activo=True).first()
 
@@ -213,15 +261,17 @@ def registrar(request):
                 )
             return JsonResponse({"ok": False, "error": "Código no existe."}, status=404)
 
-        # Bloqueo de re-escaneo: si este punto ya se registró en la ejecución en
-        # curso, NO se registra de nuevo (solo se avisa). El progreso no cambia.
-        if ejecucion and LibroNovedades.objects.filter(
+        # Bloqueo de re-escaneo POR GUARDIA + TURNO: si ESTE guardia ya registró
+        # ESTE punto, para ESTA ronda, DENTRO de la ventana del turno, no se
+        # registra de nuevo (solo se avisa). Independiente de la sesión/pantalla.
+        if ejecucion and ventana and LibroNovedades.objects.filter(
             ronda_id=ejecucion.ronda_id,
             guardia_keycloak_id=keycloak_id,
             punto_control=cp,
-            timestamp_servidor__gte=ejecucion.iniciada_en,
+            timestamp_servidor__gte=ventana[0],
+            timestamp_servidor__lte=ventana[1],
         ).exists():
-            estado = _estado_ejecucion(ejecucion)
+            estado = _estado_ejecucion(ejecucion, ventana)
             return JsonResponse({
                 "ok": False,
                 "ya_escaneado": True,
@@ -281,9 +331,9 @@ def registrar(request):
         "dentro_geocerca": dentro_geocerca,
     }
 
-    # Progreso de la ronda en curso (si la hay).
-    if ejecucion:
-        estado = _estado_ejecucion(ejecucion)
+    # Progreso de la ronda en curso (si la hay), dentro de la ventana del turno.
+    if ejecucion and ventana:
+        estado = _estado_ejecucion(ejecucion, ventana)
         resp["pertenece"] = cp.id in estado["punto_ids"]
         resp["progreso"] = {
             "escaneados": estado["escaneados"],
