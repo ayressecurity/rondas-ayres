@@ -46,6 +46,8 @@ def informe_novedades(request):
         titulo="Informe de Novedades",
         aplica_filtro=_filtro_novedades,
         export_url="informes:exportar_novedades",
+        template="informes/novedades.html",
+        con_imagen=True,
     )
 
 

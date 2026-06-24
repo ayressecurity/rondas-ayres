@@ -16,7 +16,7 @@
     </div>
 {% endif %}
 
-<form method="post" enctype="multipart/form-data" class="form-tarjeta" novalidate>
+<form method="post" class="form-tarjeta" id="formNovedad" novalidate>
     {% csrf_token %}
 
     <div class="campo-form">
@@ -26,10 +26,24 @@
     </div>
 
     <div class="campo-form">
-        <label for="{{ form.foto.id_for_label }}">{{ form.foto.label }} <span class="req">*</span></label>
-        <small class="campo-ayuda">{{ form.foto.help_text }}</small>
-        {{ form.foto }}
-        {% for error in form.foto.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+        <label>Foto <span class="req">*</span></label>
+        <small class="campo-ayuda">En el celular se abre la cámara trasera; en el computador se usa la webcam.</small>
+
+        {# Vista en vivo de la cámara. #}
+        <div class="camara-caja">
+            <video id="camaraVideo" class="camara-video" autoplay playsinline></video>
+            <img id="camaraPreview" class="camara-preview" alt="Foto tomada" hidden>
+            <canvas id="camaraCanvas" hidden></canvas>
+        </div>
+        <div class="camara-acciones">
+            <button type="button" id="btnTomar" class="btn btn-primario">Tomar foto</button>
+            <button type="button" id="btnOtra" class="btn btn-secundario" hidden>Tomar otra</button>
+        </div>
+        <p class="campo-error" id="camaraError" hidden></p>
+
+        {# La foto viaja como dataURL base64 en este campo oculto. #}
+        {{ form.foto_data }}
+        {% for error in form.foto_data.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
     </div>
 
     <div class="form-acciones">
@@ -37,4 +51,93 @@
         <a href="{% url 'comun:dashboard' %}" class="btn btn-secundario">Cancelar</a>
     </div>
 </form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    "use strict";
+
+    var video = document.getElementById("camaraVideo");
+    var preview = document.getElementById("camaraPreview");
+    var canvas = document.getElementById("camaraCanvas");
+    var btnTomar = document.getElementById("btnTomar");
+    var btnOtra = document.getElementById("btnOtra");
+    var errorBox = document.getElementById("camaraError");
+    var campoData = document.getElementById("{{ form.foto_data.id_for_label }}");
+    var form = document.getElementById("formNovedad");
+
+    var stream = null;
+
+    function mostrarError(msg) {
+        errorBox.textContent = msg;
+        errorBox.hidden = false;
+    }
+    function limpiarError() { errorBox.hidden = true; errorBox.textContent = ""; }
+
+    function detenerCamara() {
+        if (stream) {
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            stream = null;
+        }
+    }
+
+    function iniciarCamara() {
+        limpiarError();
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            mostrarError("Este navegador no permite usar la cámara. Usa HTTPS y un navegador actualizado.");
+            btnTomar.disabled = true;
+            return;
+        }
+        // facingMode 'environment' = cámara trasera en celular; en PC usa la webcam.
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false })
+            .then(function (s) {
+                stream = s;
+                video.srcObject = s;
+                video.hidden = false;
+                preview.hidden = true;
+                btnTomar.hidden = false;
+                btnOtra.hidden = true;
+                btnTomar.disabled = false;
+            })
+            .catch(function () {
+                mostrarError("No se pudo acceder a la cámara. Revisa los permisos del navegador.");
+            });
+    }
+
+    function tomarFoto() {
+        if (!stream) { return; }
+        var w = video.videoWidth, h = video.videoHeight;
+        if (!w || !h) { return; }
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext("2d").drawImage(video, 0, 0, w, h);
+        var dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+
+        campoData.value = dataUrl;          // se enviará al backend
+        preview.src = dataUrl;
+        preview.hidden = false;
+        video.hidden = true;
+        detenerCamara();                    // libera la cámara
+        btnTomar.hidden = true;
+        btnOtra.hidden = false;
+    }
+
+    btnTomar.addEventListener("click", tomarFoto);
+    btnOtra.addEventListener("click", function () {
+        campoData.value = "";
+        iniciarCamara();
+    });
+
+    // No dejar enviar sin foto tomada.
+    form.addEventListener("submit", function (e) {
+        if (!campoData.value) {
+            e.preventDefault();
+            mostrarError("Toma una foto antes de guardar.");
+        }
+    });
+
+    iniciarCamara();
+})();
+</script>
 {% endblock %}

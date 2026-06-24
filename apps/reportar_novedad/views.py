@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.db import transaction
 from django.shortcuts import redirect, render
@@ -23,16 +24,16 @@ from .forms import ReportarNovedadForm
 @requiere_instalacion
 @solo_super_admin
 def index(request):
-    """Reporta una novedad: crea el evento + guarda la foto en MEDIA."""
+    """Reporta una novedad: crea el evento + guarda en MEDIA la foto tomada con
+    la cámara (llega como dataURL base64 ya validado en el form)."""
     if request.method == "POST":
-        form = ReportarNovedadForm(request.POST, request.FILES)
+        form = ReportarNovedadForm(request.POST)
         if form.is_valid():
             tipo = TipoEvento.objects.filter(codigo="novedad").first()
             if tipo is None:
                 messages.error(request, "Falta el catálogo de eventos (corre seed_tipos_evento).")
             else:
                 ahora = timezone.now()  # aware; se muestra en Santiago en los informes
-                foto = form.cleaned_data["foto"]
                 with transaction.atomic():
                     evento = LibroNovedades.objects.create(
                         instalacion_id=request.session["instalacion_id"],  # SIEMPRE de la sesión
@@ -43,7 +44,10 @@ def index(request):
                         estado="ok",
                         texto=form.cleaned_data["texto"],
                     )
-                    path = default_storage.save(f"novedades/{uuid4().hex}_{foto.name}", foto)
+                    path = default_storage.save(
+                        f"novedades/{uuid4().hex}.{form.imagen_ext}",
+                        ContentFile(form.imagen_bytes),
+                    )
                     LibroNovedadesMedia.objects.create(
                         libro_novedades=evento, tipo=TipoMedia.FOTO, path=path
                     )

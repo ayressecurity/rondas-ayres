@@ -11,6 +11,7 @@ construyen aware en Santiago para filtrar timestamp_evento correctamente.
 from datetime import date, datetime, time, timedelta
 
 from django.contrib.auth import get_user_model
+from django.core.files.storage import default_storage
 from django.core.paginator import Paginator
 from django.db.models import CharField, Value
 from django.db.models.functions import Cast, Lower, Replace
@@ -20,7 +21,7 @@ from django.utils import timezone
 
 POR_PAGINA = 20
 
-from apps.novedades.models import LibroNovedades
+from apps.novedades.models import LibroNovedades, LibroNovedadesMedia, TipoMedia
 
 ANIO_BASE = 2026
 MESES = [
@@ -151,13 +152,39 @@ def eventos_filtrados(request, aplica_filtro):
     return eventos, rango, etiqueta, valores
 
 
-def render_informe(request, *, titulo, aplica_filtro, export_url=None):
+def _adjuntar_fotos(page_obj):
+    """Setea ev.foto_url (URL en MEDIA de la 1ª foto del evento) o None.
+
+    Solo consulta los medios de los eventos de la página actual (no todo).
+    """
+    ids = [ev.id for ev in page_obj]
+    fotos = {}
+    if ids:
+        medios = (
+            LibroNovedadesMedia.objects
+            .filter(libro_novedades_id__in=ids, tipo=TipoMedia.FOTO)
+            .order_by("id")
+            .values_list("libro_novedades_id", "path")
+        )
+        for libro_id, path in medios:
+            fotos.setdefault(libro_id, path)  # primera foto por evento
+    for ev in page_obj:
+        path = fotos.get(ev.id)
+        ev.foto_url = default_storage.url(path) if path else None
+
+
+def render_informe(request, *, titulo, aplica_filtro, export_url=None,
+                   template="informes/informe.html", con_imagen=False):
     """Renderiza el informe (tabla + filtros + paginador). export_url = nombre de
-    ruta de exportación a Excel (opcional)."""
+    ruta de exportación a Excel (opcional). con_imagen adjunta la foto por fila
+    (Informe de Novedades). template permite variar las columnas por informe."""
     eventos, _rango, etiqueta, valores = eventos_filtrados(request, aplica_filtro)
 
     # Paginación de a 20, respetando el filtro (se pagina el resultado filtrado).
     page_obj = Paginator(eventos, POR_PAGINA).get_page(request.GET.get("page"))
+
+    if con_imagen:
+        _adjuntar_fotos(page_obj)
 
     # Querystring del filtro SIN 'page' (para los enlaces del paginador y export).
     params = request.GET.copy()
@@ -174,4 +201,4 @@ def render_informe(request, *, titulo, aplica_filtro, export_url=None):
         "export_url": reverse(export_url) if export_url else None,
         "query_sin_page": query_sin_page,
     }
-    return render(request, "informes/informe.html", contexto)
+    return render(request, template, contexto)

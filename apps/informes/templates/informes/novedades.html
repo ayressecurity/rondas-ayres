@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block titulo %}{{ titulo }} — Rondas{% endblock %}
+
+{% block contenido %}
+<div class="modulo-cabecera">
+    <div>
+        <h1>{{ titulo }}</h1>
+        <p class="contexto-instalacion">Instalación: <strong>{{ instalacion_nombre }}</strong></p>
+    </div>
+    {% if export_url %}
+    <div class="cabecera-acciones">
+        <a href="{{ export_url }}{% if query_sin_page %}?{{ query_sin_page }}{% endif %}" class="btn btn-primario">Exportar a Excel</a>
+    </div>
+    {% endif %}
+</div>
+
+{% include "informes/_filtros.html" %}
+
+{% if page_obj.object_list %}
+<div class="tabla-scroll">
+    <table class="tabla-objetivos">
+        <thead>
+            <tr>
+                <th>Fecha/Hora</th>
+                <th>Observación</th>
+                <th>Tipo de evento</th>
+                <th>Guardia</th>
+                <th>Imagen</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ev in page_obj %}
+                <tr class="fila-objetivo">
+                    {# date: convierte el datetime aware a la zona activa (Santiago), sin decimales. #}
+                    <td data-col="Fecha/Hora">{{ ev.timestamp_evento|date:"Y-m-d H:i:s" }}</td>
+                    <td data-col="Observación">{{ ev.texto|default:"—" }}</td>
+                    <td data-col="Tipo de evento">{{ ev.tipo_evento.nombre }}</td>
+                    <td data-col="Guardia">{{ ev.guardia_nombre }}</td>
+                    <td data-col="Imagen">
+                        {% if ev.foto_url %}
+                            <button type="button" class="accion-link accion-imagen" data-img-url="{{ ev.foto_url }}">Ver imagen</button>
+                        {% else %}—{% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% include "informes/_paginador.html" %}
+{% else %}
+<div class="estado-vacio">
+    {% if filtro_label != "Todos" %}
+        <p>No hay novedades para «{{ filtro_label }}» en esta instalación.</p>
+    {% else %}
+        <p>Aún no hay novedades registradas en esta instalación.</p>
+    {% endif %}
+</div>
+{% endif %}
+
+{# Modal on-brand para ver la imagen de la novedad (se rellena por JS). #}
+<div class="img-modal" id="imgModal" hidden>
+    <div class="img-modal-overlay" data-img-cerrar></div>
+    <div class="img-modal-caja" role="dialog" aria-modal="true" aria-labelledby="imgModalTitulo">
+        <div class="qr-modal-cabecera">
+            <h2 id="imgModalTitulo">Imagen de la novedad</h2>
+            <button type="button" class="qr-modal-cerrar" data-img-cerrar aria-label="Cerrar">×</button>
+        </div>
+        <div class="img-modal-cuerpo">
+            <img id="imgModalImg" src="" alt="Foto de la novedad">
+        </div>
+        <div class="form-acciones">
+            <button type="button" class="btn btn-secundario" data-img-cerrar>Cerrar</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Modal de imagen de novedades: muestra la foto servida desde MEDIA.
+(function () {
+    "use strict";
+    var modal = document.getElementById("imgModal");
+    if (!modal) { return; }
+    var img = document.getElementById("imgModalImg");
+
+    function abrir(url) {
+        img.src = url;
+        modal.hidden = false;
+    }
+    function cerrar() {
+        modal.hidden = true;
+        img.src = "";
+    }
+
+    document.querySelectorAll(".accion-imagen").forEach(function (b) {
+        b.addEventListener("click", function () { abrir(b.getAttribute("data-img-url")); });
+    });
+    modal.addEventListener("click", function (e) {
+        if (e.target.hasAttribute("data-img-cerrar")) { cerrar(); }
+    });
+    document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && !modal.hidden) { cerrar(); }
+    });
+})();
+</script>
+{% endblock %}

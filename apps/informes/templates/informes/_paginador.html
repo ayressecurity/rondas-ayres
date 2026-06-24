@@ -1,0 +1,14 @@
+{# Paginador (20 por página) — compartido por los informes. #}
+<nav class="paginador" aria-label="Paginación">
+    {% if page_obj.has_previous %}
+        <a class="btn btn-secundario" href="?{% if query_sin_page %}{{ query_sin_page }}&{% endif %}page={{ page_obj.previous_page_number }}">Anterior</a>
+    {% else %}
+        <span class="btn btn-secundario btn-deshabilitado">Anterior</span>
+    {% endif %}
+    <span class="paginador-texto">Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>
+    {% if page_obj.has_next %}
+        <a class="btn btn-secundario" href="?{% if query_sin_page %}{{ query_sin_page }}&{% endif %}page={{ page_obj.next_page_number }}">Siguiente</a>
+    {% else %}
+        <span class="btn btn-secundario btn-deshabilitado">Siguiente</span>
+    {% endif %}
+</nav>
