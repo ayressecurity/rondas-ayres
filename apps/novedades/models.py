@@ -53,8 +53,10 @@ class LibroNovedades(models.Model):
     tipo_evento = models.ForeignKey("novedades.TipoEvento", on_delete=models.PROTECT)
     timestamp_evento = models.DateTimeField()  # terreno
     timestamp_servidor = models.DateTimeField()  # offline / al sincronizar
-    lat = models.DecimalField(max_digits=10, decimal_places=8, null=True, blank=True)
-    lng = models.DecimalField(max_digits=11, decimal_places=8, null=True, blank=True)
+    # Coordenadas amplias (misma precisión que punto_control): 20 dígitos / 17
+    # decimales, para guardar la posición del escaneo sin truncar.
+    lat = models.DecimalField(max_digits=20, decimal_places=17, null=True, blank=True)
+    lng = models.DecimalField(max_digits=20, decimal_places=17, null=True, blank=True)
     distancia_metros = models.DecimalField(max_digits=7, decimal_places=2, null=True, blank=True)
     dentro_geocerca = models.BooleanField(null=True, blank=True)
     estado = models.CharField(max_length=10, choices=EstadoEvento.choices, default=EstadoEvento.OK)
