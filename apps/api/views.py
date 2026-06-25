@@ -10,7 +10,12 @@ Aislamiento por guardia: los listados "?mias" se filtran SIEMPRE por el
 keycloak_id del token; nunca devuelven datos de otro guardia.
 """
 import logging
+from uuid import uuid4
 
+from django.conf import settings
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
+from django.db import transaction
 from django.db.models import CharField, Prefetch, Q, Value
 from django.db.models.functions import Cast, Lower, Replace
 from django.utils import timezone
@@ -37,6 +42,7 @@ from apps.comun.services.rondas import (
     registrar_escaneo,
 )
 from apps.cuentas.identidad import norm_keycloak_id
+from apps.novedades.models import LibroNovedades, LibroNovedadesMedia, TipoMedia
 from apps.rondas.models import (
     DestinoNotificacion,
     EstadoGenerico,
@@ -271,3 +277,86 @@ def crear_evento(request):
         ahora=ahora,
     )
     return _evento_a_http(res)
+
+
+# Extensiones permitidas -> tipo de media (libro_novedades_media.tipo).
+# Se valida por EXTENSIÓN (el content-type del cliente no es de fiar): generamos
+# nuestro propio nombre y conservamos solo esta extensión validada.
+_EXT_A_TIPO = {
+    "jpg": TipoMedia.FOTO, "jpeg": TipoMedia.FOTO, "png": TipoMedia.FOTO, "webp": TipoMedia.FOTO,
+    "mp3": TipoMedia.AUDIO, "m4a": TipoMedia.AUDIO, "ogg": TipoMedia.AUDIO,
+    "mp4": TipoMedia.VIDEO,
+}
+_TIPOS_ACEPTADOS_TXT = "foto (jpg, jpeg, png, webp), audio (mp3, m4a, ogg), video (mp4)"
+
+
+def _limite_mb(tipo):
+    """MB máximos para ese tipo, leídos de settings (configurables por .env)."""
+    return {
+        TipoMedia.FOTO: settings.MEDIA_MAX_FOTO_MB,
+        TipoMedia.AUDIO: settings.MEDIA_MAX_AUDIO_MB,
+        TipoMedia.VIDEO: settings.MEDIA_MAX_VIDEO_MB,
+    }[tipo]
+
+
+def _extension(nombre):
+    """Extensión en minúsculas del nombre subido (sin el punto), o '' si no tiene."""
+    nombre = nombre or ""
+    return nombre.rsplit(".", 1)[-1].lower() if "." in nombre else ""
+
+
+@api_view(["POST"])
+def subir_media(request, evento_id):
+    """POST /api/eventos/{id}/media — adjunta archivos (foto/audio/video) a un evento.
+
+    Adaptador delgado: verifica propiedad por el TOKEN, valida TODOS los archivos
+    (tipo + tamaño) ANTES de guardar (todo-o-nada) y crea las filas en
+    libro_novedades_media con el archivo físico en MEDIA.
+    """
+    sub = request.sub_con_guiones  # identidad del TOKEN, CON guiones
+
+    # PROPIEDAD: el evento debe ser del guardia del token. Si no existe O es de
+    # OTRO guardia -> 404 (mismo error en ambos casos: NO revelamos la existencia
+    # de eventos ajenos). Comparación normalizada (contrato de identidad).
+    evento = LibroNovedades.objects.filter(id=evento_id).first()
+    if evento is None or norm_keycloak_id(evento.guardia_keycloak_id) != norm_keycloak_id(sub):
+        raise no_encontrado("Evento no encontrado.", "evento_no_encontrado")
+
+    archivos = request.FILES.getlist("archivo")
+    if not archivos:
+        raise solicitud_invalida("No se recibió ningún archivo (campo 'archivo').", "sin_archivo")
+
+    # 1) VALIDAR TODOS antes de guardar nada (todo-o-nada: si uno falla, no se
+    #    persiste ninguno, para no dejar media a medias).
+    validados = []  # [(archivo, tipo, ext), ...]
+    for f in archivos:
+        ext = _extension(f.name)
+        tipo = _EXT_A_TIPO.get(ext)
+        if tipo is None:
+            raise solicitud_invalida(
+                f"Tipo de archivo no permitido: «{f.name}». Aceptados: {_TIPOS_ACEPTADOS_TXT}.",
+                "tipo_no_permitido",
+            )
+        limite_bytes = _limite_mb(tipo) * 1024 * 1024
+        if f.size > limite_bytes:
+            raise solicitud_invalida(
+                f"El archivo «{f.name}» excede el máximo de {_limite_mb(tipo)} MB para {tipo}.",
+                "tamano_excedido",
+            )
+        validados.append((f, tipo, ext))
+
+    # 2) GUARDAR todos (archivo físico + fila) en una transacción.
+    creados = []
+    with transaction.atomic():
+        for f, tipo, ext in validados:
+            # Nombre PROPIO (uuid) -> evita path traversal y colisiones; solo se
+            # conserva la extensión validada. Carpeta por evento.
+            destino = f"libro_novedades/{evento.id}/{uuid4().hex}.{ext}"
+            path = default_storage.save(destino, ContentFile(f.read()))
+            media = LibroNovedadesMedia.objects.create(
+                libro_novedades=evento, tipo=tipo, path=path,
+            )
+            creados.append({"id": media.id, "tipo": media.tipo, "url_relativa": default_storage.url(path)})
+
+    log.info("media_subida evento=%s sub=%s archivos=%s", evento.id, sub, len(creados))
+    return Response(creados, status=status.HTTP_201_CREATED)

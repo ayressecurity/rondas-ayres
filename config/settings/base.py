@@ -177,6 +177,12 @@ STORAGES = {
 MEDIA_URL = env("MEDIA_URL", default="/media/")
 MEDIA_ROOT = env("MEDIA_ROOT", default=BASE_DIR / "media")
 
+# Tamaño máximo (MB) por tipo de archivo subido a la API (POST /api/eventos/{id}/media).
+# Configurable por .env; defaults razonables para campo móvil.
+MEDIA_MAX_FOTO_MB = env.int("MEDIA_MAX_FOTO_MB", default=10)
+MEDIA_MAX_AUDIO_MB = env.int("MEDIA_MAX_AUDIO_MB", default=20)
+MEDIA_MAX_VIDEO_MB = env.int("MEDIA_MAX_VIDEO_MB", default=50)
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Seguridad para el servidor (Nginx + HTTPS). Solo cuando DEBUG=False.

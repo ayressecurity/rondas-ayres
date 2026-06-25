@@ -16,4 +16,6 @@ urlpatterns = [
     path("notificaciones", views.notificaciones_mias, name="notificaciones_mias"),
     # POST /api/eventos — registra una marca (escaneo) del guardia.
     path("eventos", views.crear_evento, name="crear_evento"),
+    # POST /api/eventos/{id}/media — adjunta archivos a un evento del guardia.
+    path("eventos/<int:evento_id>/media", views.subir_media, name="subir_media"),
 ]

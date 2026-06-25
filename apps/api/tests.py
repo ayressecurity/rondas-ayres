@@ -7,6 +7,8 @@ de test (así no hay red ni JWKS real).
 - LecturasApiTests: los 3 endpoints de lectura del Prompt B + aislamiento por guardia.
 - EventosApiTests: POST /api/eventos del Prompt E (registro vía service compartido).
 """
+import shutil
+import tempfile
 from datetime import date, datetime, time as dtime, timedelta, timezone
 from unittest.mock import patch
 from uuid import UUID
@@ -15,13 +17,20 @@ import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.files.storage import default_storage
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone as dj_tz
 from rest_framework.test import APIClient
 
 from apps.checkpoints.models import PuntoControl
-from apps.novedades.models import LibroNovedades
+from apps.novedades.models import (
+    CategoriaEvento,
+    LibroNovedades,
+    LibroNovedadesMedia,
+    TipoEvento,
+)
 from apps.rondas.models import (
     DestinoNotificacion,
     EstadoGenerico,
@@ -30,6 +39,9 @@ from apps.rondas.models import (
     RondaGuardia,
     RondaSecuencia,
 )
+
+# MEDIA en carpeta temporal: los tests de subida no tocan el media real.
+_MEDIA_TMP = tempfile.mkdtemp()
 
 URL_ME = "/api/me"
 SUB = "11111111-2222-3333-4444-555555555555"  # con guiones, como en el token
@@ -372,3 +384,116 @@ class EventosApiTests(_JwtMixin, TestCase):
         self.assertEqual(ev_web.instalacion_id, ev_api.instalacion_id)
         self.assertEqual(ev_web.guardia_keycloak_id, self.GUARDIA)
         self.assertEqual(ev_api.guardia_keycloak_id, otro)  # cada uno con SU sub, con guiones
+
+
+@override_settings(MEDIA_ROOT=_MEDIA_TMP)
+class MediaApiTests(_JwtMixin, TestCase):
+    """POST /api/eventos/{id}/media — subida de archivos a un evento propio."""
+    OWNER = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"  # dueño del evento (sub del token)
+    OTRO = "ffffffff-ffff-ffff-ffff-ffffffffffff"   # otro guardia
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(_MEDIA_TMP, ignore_errors=True)  # limpia los archivos de test
+
+    def setUp(self):
+        super().setUp()
+        self.tipo = TipoEvento.objects.create(
+            codigo="novedad", nombre="Novedad", categoria=CategoriaEvento.NOVEDAD,
+        )
+        self.evento = self._evento_de(self.OWNER)
+
+    def _evento_de(self, guardia):
+        ahora = dj_tz.now()
+        return LibroNovedades.objects.create(
+            instalacion_id=10, guardia_keycloak_id=guardia, tipo_evento=self.tipo,
+            timestamp_evento=ahora, timestamp_servidor=ahora, estado="ok",
+        )
+
+    def _url(self, evento_id):
+        return f"/api/eventos/{evento_id}/media"
+
+    def _post_media(self, evento_id, archivos, sub=None):
+        return self.client.post(
+            self._url(evento_id), {"archivo": archivos}, format="multipart",
+            HTTP_AUTHORIZATION=f"Bearer {self._token(_claims(sub=sub or self.OWNER))}",
+        )
+
+    @staticmethod
+    def _foto(nombre="foto.jpg", contenido=b"datos-jpeg"):
+        return SimpleUploadedFile(nombre, contenido, content_type="image/jpeg")
+
+    # ---- éxito ----
+    def test_subir_una_foto_201(self):
+        resp = self._post_media(self.evento.id, [self._foto()])
+        self.assertEqual(resp.status_code, 201)
+        data = resp.json()
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["tipo"], "foto")
+
+        medios = LibroNovedadesMedia.objects.filter(libro_novedades=self.evento)
+        self.assertEqual(medios.count(), 1)
+        media = medios.first()
+        self.assertEqual(media.tipo, "foto")
+        # El archivo físico existe en MEDIA y la ruta va organizada por evento.
+        self.assertTrue(default_storage.exists(media.path))
+        self.assertTrue(media.path.startswith(f"libro_novedades/{self.evento.id}/"))
+        # NO se conserva el nombre del cliente (nombre propio uuid).
+        self.assertNotIn("foto.jpg", media.path)
+
+    def test_subir_varios_201(self):
+        archivos = [
+            self._foto("a.jpg"),
+            self._foto("b.png", b"datos-png"),
+            SimpleUploadedFile("c.mp3", b"datos-mp3", content_type="audio/mpeg"),
+        ]
+        resp = self._post_media(self.evento.id, archivos)
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(len(resp.json()), 3)
+        self.assertEqual(LibroNovedadesMedia.objects.filter(libro_novedades=self.evento).count(), 3)
+        tipos = set(LibroNovedadesMedia.objects.values_list("tipo", flat=True))
+        self.assertEqual(tipos, {"foto", "audio"})
+
+    # ---- propiedad ----
+    def test_evento_de_otro_guardia_404(self):
+        ajeno = self._evento_de(self.OTRO)
+        resp = self._post_media(ajeno.id, [self._foto()], sub=self.OWNER)
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.json()["error"]["codigo"], "no_encontrado")
+        self.assertEqual(LibroNovedadesMedia.objects.filter(libro_novedades=ajeno).count(), 0)
+
+    def test_evento_inexistente_404(self):
+        resp = self._post_media(999999, [self._foto()])
+        self.assertEqual(resp.status_code, 404)
+
+    # ---- validaciones ----
+    def test_tipo_no_permitido_400_sin_crear_nada(self):
+        malo = SimpleUploadedFile("virus.exe", b"MZ...", content_type="application/octet-stream")
+        resp = self._post_media(self.evento.id, [malo])
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(LibroNovedadesMedia.objects.count(), 0)
+
+    def test_todo_o_nada_un_invalido_no_guarda_ninguno(self):
+        archivos = [self._foto("ok.jpg"), SimpleUploadedFile("malo.exe", b"x")]
+        resp = self._post_media(self.evento.id, archivos)
+        self.assertEqual(resp.status_code, 400)
+        # Ni la foto válida se guardó (todo-o-nada).
+        self.assertEqual(LibroNovedadesMedia.objects.count(), 0)
+
+    @override_settings(MEDIA_MAX_FOTO_MB=0)
+    def test_tamano_excedido_400(self):
+        resp = self._post_media(self.evento.id, [self._foto(contenido=b"cualquier-cosa")])
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(LibroNovedadesMedia.objects.count(), 0)
+
+    def test_sin_archivo_400(self):
+        resp = self.client.post(
+            self._url(self.evento.id), {}, format="multipart",
+            HTTP_AUTHORIZATION=f"Bearer {self._token(_claims(sub=self.OWNER))}",
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_sin_token_401(self):
+        resp = self.client.post(self._url(self.evento.id), {"archivo": [self._foto()]}, format="multipart")
+        self.assertEqual(resp.status_code, 401)
