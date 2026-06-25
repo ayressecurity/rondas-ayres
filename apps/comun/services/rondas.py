@@ -219,6 +219,8 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
     El dict siempre trae "resultado" como discriminador para el adaptador:
       - "codigo_no_existe": el QR no calza con ningún punto activo (se registró el
         evento codigo_no_existe igual que antes). -> el adaptador responde 404.
+      - "punto_otra_instalacion": el punto existe pero es de OTRA instalación; NO
+        se registra nada ni se toca ronda_ejecucion. -> el adaptador da error claro.
       - "catalogo_incompleto": falta el catálogo (corre seed_tipos_evento). -> 500.
       - "ya_escaneado": el guardia ya registró ese punto en esa ronda+ventana.
       - "ok": arribo registrado; incluye progreso y completada si hay ejecución.
@@ -252,6 +254,13 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
                     texto=texto or f"QR escaneado sin coincidencia: {qr_token}",
                 )
             return {"resultado": "codigo_no_existe"}
+
+        # El punto debe pertenecer a la MISMA instalación que se está operando.
+        # Si es de OTRA instalación, NO se registra nada (evita marcar puntos
+        # ajenos como "fuera de geocerca" a miles de metros). Comparación
+        # type-safe (la sesión guarda int; un futuro llamador podría dar str).
+        if str(cp.instalacion_id) != str(instalacion_id):
+            return {"resultado": "punto_otra_instalacion", "punto_nombre": cp.nombre}
 
         # Bloqueo de re-escaneo POR GUARDIA + TURNO: si ESTE guardia ya registró
         # ESTE punto, para ESTA ronda, DENTRO de la ventana del turno, no se

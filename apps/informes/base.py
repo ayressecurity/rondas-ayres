@@ -80,8 +80,22 @@ def _rango_y_label(request):
     rango = (inicio, fin) aware en Santiago, o None (sin filtro = todo).
     Precedencia: día > rango libre (desde/hasta) > mes(+año) > año.
     valores repinta el formulario.
+
+    POR DEFECTO (primera carga, GET sin NINGÚN parámetro de fecha) el rango es el
+    DÍA DE HOY (Santiago). Si el usuario envía el formulario con todo vacío
+    (las claves vienen presentes pero sin valor) se respeta su elección = Todos.
     """
     g = request.GET
+
+    # Primera carga sin filtros: ninguna clave de fecha en el GET -> hoy.
+    # (El formulario, al enviarse, SIEMPRE manda estas claves aunque vacías; un
+    # enlace directo al informe no manda ninguna.)
+    claves_fecha = ("dia", "fini", "ffin", "mes", "anio")
+    if not any(k in g for k in claves_fecha):
+        hoy = timezone.localtime(timezone.now()).date()
+        valores = {"dia": hoy.isoformat(), "fini": "", "ffin": "", "mes": "", "anio": ""}
+        return (_aware(hoy), _aware(hoy + timedelta(days=1))), f"Día {hoy.isoformat()}", valores
+
     dia = (g.get("dia") or "").strip()
     fini = (g.get("fini") or "").strip()   # fecha inicio del rango
     ffin = (g.get("ffin") or "").strip()   # fecha fin del rango

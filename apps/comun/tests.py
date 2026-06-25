@@ -88,6 +88,25 @@ class ServiceRondasTests(TestCase):
         self.assertEqual(ev.tipo_evento.codigo, "codigo_no_existe")
         self.assertEqual(ev.instalacion_id, 0)  # punto desconocido
 
+    # ---- validación de instalación (Parte 1) ----
+    def test_punto_de_otra_instalacion_no_registra(self):
+        # Punto que existe pero pertenece a OTRA instalación (la 99).
+        cp_otra = PuntoControl.objects.create(
+            instalacion_id=99, nombre="Punto Ajeno", lat=str(LAT), lng=str(LNG),
+            tolerancia_mts=30, validar_posicion=True,
+            qr_token="99999999-9999-9999-9999-999999999999", activo=True,
+        )
+        antes = LibroNovedades.objects.count()
+        res = registrar_escaneo(
+            instalacion_id=10, guardia_keycloak_id=GUARDIA,   # operando la 10
+            qr_token=cp_otra.qr_token, lat=LAT, lng=LNG, texto=None,
+            ahora=timezone.now(),
+        )
+        self.assertEqual(res["resultado"], "punto_otra_instalacion")
+        self.assertEqual(res["punto_nombre"], "Punto Ajeno")
+        # NO se escribió NADA en libro_novedades.
+        self.assertEqual(LibroNovedades.objects.count(), antes)
+
     # ---- contrato de identidad ----
     def test_guardia_se_escribe_con_guiones_tal_cual(self):
         registrar_escaneo(

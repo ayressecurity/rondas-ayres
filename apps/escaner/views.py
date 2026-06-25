@@ -109,6 +109,11 @@ def registrar(request):
     resultado = res["resultado"]
     if resultado == "codigo_no_existe":
         return JsonResponse({"ok": False, "error": "Código no existe."}, status=404)
+    if resultado == "punto_otra_instalacion":
+        return JsonResponse(
+            {"ok": False, "error": "Este QR no pertenece a esta instalación."},
+            status=400,
+        )
     if resultado == "catalogo_incompleto":
         return JsonResponse(
             {"ok": False, "error": "Falta el catálogo de eventos (corre seed_tipos_evento)."},
