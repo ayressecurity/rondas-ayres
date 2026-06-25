@@ -10,10 +10,20 @@ Nunca se filtran trazas ni detalles internos al cliente. El detalle técnico
 """
 import logging
 
-from rest_framework.exceptions import APIException, NotAuthenticated
+from rest_framework.exceptions import APIException, NotAuthenticated, NotFound
 from rest_framework.response import Response
 
 log = logging.getLogger("apps.api")
+
+
+def no_encontrado(mensaje, motivo="no_encontrado"):
+    """NotFound (-> 404) con mensaje claro y motivo para el log estructurado.
+
+    El handler usa el `mensaje` solo si la excepción trae `motivo` (así NO se
+    filtran los textos por defecto en inglés de DRF)."""
+    exc = NotFound(mensaje)
+    exc.motivo = motivo
+    return exc
 
 
 class DependenciaNoDisponible(APIException):

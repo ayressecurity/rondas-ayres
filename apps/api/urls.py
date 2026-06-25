@@ -8,4 +8,10 @@ app_name = "api"
 urlpatterns = [
     # GET /api/me — prueba del portero (token válido -> 200).
     path("me", views.me, name="me"),
+    # GET /api/checkpoints/by-qr/{qr_token} — resuelve un punto por su QR.
+    path("checkpoints/by-qr/<str:qr_token>", views.checkpoint_by_qr, name="checkpoint_by_qr"),
+    # GET /api/rondas?mias — rondas del guardia del token.
+    path("rondas", views.rondas_mias, name="rondas_mias"),
+    # GET /api/notificaciones?mias — recordatorios del guardia del token.
+    path("notificaciones", views.notificaciones_mias, name="notificaciones_mias"),
 ]
