@@ -9,18 +9,33 @@ gate de super_admin: la API es para guardias.
 Aislamiento por guardia: los listados "?mias" se filtran SIEMPRE por el
 keycloak_id del token; nunca devuelven datos de otro guardia.
 """
+import logging
+
 from django.db.models import CharField, Prefetch, Q, Value
 from django.db.models.functions import Cast, Lower, Replace
+from django.utils import timezone
+from rest_framework import status
 from rest_framework.decorators import api_view
+from rest_framework.exceptions import APIException
 from rest_framework.response import Response
 
-from apps.api.exceptions import no_encontrado
+from apps.api.exceptions import (
+    catalogo_no_disponible,
+    no_encontrado,
+    solicitud_invalida,
+)
 from apps.api.serializers import (
+    EventoCreateSerializer,
     NotificacionSerializer,
     PuntoControlByQrSerializer,
     RondaSerializer,
 )
 from apps.checkpoints.models import PuntoControl
+from apps.comun.services.rondas import (
+    SinRondaActiva,
+    iniciar_o_reusar_ejecucion,
+    registrar_escaneo,
+)
 from apps.cuentas.identidad import norm_keycloak_id
 from apps.rondas.models import (
     DestinoNotificacion,
@@ -30,6 +45,8 @@ from apps.rondas.models import (
     RondaGuardia,
     RondaSecuencia,
 )
+
+log = logging.getLogger("apps.api")
 
 
 def _kc_norm(campo):
@@ -128,3 +145,129 @@ def notificaciones_mias(request):
         .order_by("-id")
     )
     return Response(NotificacionSerializer(notifs, many=True).data)
+
+
+def _primer_campo_invalido(errores):
+    """Nombre del primer campo con error (para un mensaje 400 claro)."""
+    try:
+        return next(iter(errores))
+    except StopIteration:
+        return "body"
+
+
+def _evento_a_http(res):
+    """Traduce el `resultado` del service a la respuesta HTTP de la API.
+
+    Mapeo (mismos resultados que produce registrar_escaneo):
+      - ok                     -> 201 (evento nuevo registrado)
+      - ya_escaneado           -> 200 (caso normal: idempotencia por turno)
+      - codigo_no_existe       -> 404 (igual que la web; el evento ya quedó registrado)
+      - punto_otra_instalacion -> 400 (robustez; no debería ocurrir por opción a)
+      - catalogo_incompleto    -> 503 controlado (faltan tipo_evento sembrados)
+      - cualquier otro         -> 500 controlado (sin trazas)
+    """
+    resultado = res["resultado"]
+    if resultado == "ok":
+        salida = {
+            "id": res["libro_id"],            # id del libro_novedades creado
+            "tipo_evento": res["tipo_evento"],  # arribo / arribo_invalido / arribo_sin_geo
+            "dentro_geocerca": res["dentro_geocerca"],
+            "distancia_metros": res["distancia_metros"],
+        }
+        if "progreso" in res:                 # solo si hay ronda/ejecución en curso
+            salida["progreso"] = res["progreso"]
+        return Response(salida, status=status.HTTP_201_CREATED)
+
+    if resultado == "ya_escaneado":
+        # Idempotencia de negocio: NO es error, es un caso normal.
+        salida = {"ya_registrado": True, "mensaje": "Ya registraste este punto en esta ronda."}
+        if "progreso" in res:
+            salida["progreso"] = res["progreso"]
+        return Response(salida, status=status.HTTP_200_OK)
+
+    if resultado == "codigo_no_existe":
+        # Igual que la web: el evento codigo_no_existe ya quedó registrado por el
+        # service; se avisa con 404 (la vista web también responde 404 aquí).
+        raise no_encontrado("El código QR no corresponde a ningún punto de control.", "codigo_no_existe")
+
+    if resultado == "punto_otra_instalacion":
+        # No ocurre por la opción a (instalación derivada del propio punto), pero
+        # se mapea por robustez.
+        raise solicitud_invalida("Este QR no pertenece a esta instalación.", "punto_otra_instalacion")
+
+    if resultado == "catalogo_incompleto":
+        raise catalogo_no_disponible()
+
+    # Resultado inesperado: error controlado, sin filtrar nada.
+    log.error("resultado_inesperado resultado=%s", resultado)
+    exc = APIException("No se pudo registrar el evento.")
+    exc.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    exc.motivo = "resultado_inesperado"
+    raise exc
+
+
+@api_view(["POST"])
+def crear_evento(request):
+    """POST /api/eventos — registra una marca del guardia desde la app móvil.
+
+    Adaptador DELGADO: valida el body, deriva la instalación del QR, y llama al
+    MISMO service que el escáner web (iniciar_o_reusar_ejecucion + registrar_escaneo).
+    Toda la lógica de negocio vive en el service; aquí solo se parsea y se traduce.
+    """
+    # 1) Validar el body. La identidad y la instalación NO salen de aquí.
+    ser = EventoCreateSerializer(data=request.data)
+    if not ser.is_valid():
+        raise solicitud_invalida(
+            f"Falta o es inválido el campo: {_primer_campo_invalido(ser.errors)}.",
+            "body_invalido",
+        )
+    datos = ser.validated_data
+
+    # 2) Identidad SIEMPRE del token (sub CON guiones que dejó el portero del A).
+    #    Aunque el body trajera keycloak_id/guardia/sub, el serializer los descartó.
+    guardia = request.sub_con_guiones
+
+    qr_token = datos["qr_token"].strip()
+    # float, igual que la vista web (_parse_coord): mismo cálculo y mismo guardado.
+    lat = float(datos["lat"])
+    lng = float(datos["lng"])
+    texto = (datos.get("texto") or "").strip() or None
+
+    # 3) 'ahora': hora de TERRENO si vino (offline); si no, la del servidor
+    #    (Santiago vía timezone). El service escribe ambos timestamps con este
+    #    valor, igual que la web (que pasa timezone.now()).
+    ts = datos.get("timestamp_evento")
+    if ts is not None and timezone.is_naive(ts):
+        ts = timezone.make_aware(ts)
+    ahora = ts or timezone.now()
+
+    # 4) Instalación DERIVADA del propio punto del QR (opción a, stateless). El
+    #    service vuelve a resolver el punto; aquí lo resolvemos para derivar la
+    #    instalación y para iniciar/reusar la ejecución de la ronda de la hora.
+    punto = PuntoControl.objects.filter(qr_token=qr_token, activo=True).first()
+    if punto is not None:
+        instalacion_id = punto.instalacion_id
+        try:
+            # Asegura una ejecución en curso para la ronda de la hora (habilita el
+            # bloqueo de re-escaneo = idempotencia), igual que el flujo web.
+            iniciar_o_reusar_ejecucion(
+                instalacion_id=instalacion_id,
+                guardia_keycloak_id=guardia,
+                ahora=ahora,
+            )
+        except SinRondaActiva:
+            pass  # sin ronda en este horario: se registra como evento suelto
+    else:
+        instalacion_id = None  # codigo_no_existe: el service usa instalacion_id=0
+
+    # 5) Registrar vía el service compartido y traducir el resultado a HTTP.
+    res = registrar_escaneo(
+        instalacion_id=instalacion_id,
+        guardia_keycloak_id=guardia,
+        qr_token=qr_token,
+        lat=lat,
+        lng=lng,
+        texto=texto,
+        ahora=ahora,
+    )
+    return _evento_a_http(res)

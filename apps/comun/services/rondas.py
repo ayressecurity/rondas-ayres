@@ -302,7 +302,7 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
         if tipo_evento is None:
             return {"resultado": "catalogo_incompleto"}
 
-        LibroNovedades.objects.create(
+        evento = LibroNovedades.objects.create(
             instalacion_id=cp.instalacion_id,
             ronda_id=ronda_id_evento,             # ronda en curso (o null)
             punto_control=cp,
@@ -320,6 +320,10 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
 
     resp = {
         "resultado": "ok",
+        # id y código del evento creado (los usa la API para el 201; el adaptador
+        # web simplemente los ignora -> su comportamiento no cambia).
+        "libro_id": evento.id,
+        "tipo_evento": tipo_evento.codigo,
         "checkpoint": cp.nombre,
         # En BD se guarda con USE_TZ (UTC). Para MOSTRAR: localtime -> Santiago.
         "hora": timezone.localtime(ahora).strftime("%H:%M:%S"),

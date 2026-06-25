@@ -54,3 +54,18 @@ class NotificacionSerializer(serializers.ModelSerializer):
             "id", "ronda_id", "destino_tipo",
             "anticipacion_min", "mensaje", "estado",
         ]
+
+
+class EventoCreateSerializer(serializers.Serializer):
+    """Body de POST /api/eventos (una marca del guardia desde la app móvil).
+
+    SOLO estos campos. La identidad (guardia) sale del TOKEN, NUNCA del body; la
+    instalación se DERIVA del punto del qr_token. Si el body trae keycloak_id /
+    guardia / sub / instalacion_id, se ignoran (no están declarados aquí)."""
+    qr_token = serializers.CharField(max_length=36)
+    # Misma precisión que PuntoControl/LibroNovedades. Se exigen numéricos.
+    lat = serializers.DecimalField(max_digits=20, decimal_places=17)
+    lng = serializers.DecimalField(max_digits=20, decimal_places=17)
+    # Hora de TERRENO (offline). Opcional: si no viene, el servidor usa "ahora".
+    timestamp_evento = serializers.DateTimeField(required=False, allow_null=True)
+    texto = serializers.CharField(required=False, allow_blank=True, allow_null=True)

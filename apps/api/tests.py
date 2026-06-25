@@ -5,8 +5,9 @@ de test (así no hay red ni JWKS real).
 
 - PorteroApiTests: el portero del Prompt A (firma, exp, JIT, normalización).
 - LecturasApiTests: los 3 endpoints de lectura del Prompt B + aislamiento por guardia.
+- EventosApiTests: POST /api/eventos del Prompt E (registro vía service compartido).
 """
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time as dtime, timedelta, timezone
 from unittest.mock import patch
 from uuid import UUID
 
@@ -14,10 +15,13 @@ import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from django.test import TestCase
+from django.utils import timezone as dj_tz
 from rest_framework.test import APIClient
 
 from apps.checkpoints.models import PuntoControl
+from apps.novedades.models import LibroNovedades
 from apps.rondas.models import (
     DestinoNotificacion,
     EstadoGenerico,
@@ -76,6 +80,13 @@ class _JwtMixin:
     def _get(self, url, sub=SUB):
         """GET autenticado como el guardia `sub`."""
         return self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {self._token(_claims(sub=sub))}")
+
+    def _post(self, url, body, sub=SUB):
+        """POST JSON autenticado como el guardia `sub`."""
+        return self.client.post(
+            url, body, format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self._token(_claims(sub=sub))}",
+        )
 
 
 class PorteroApiTests(_JwtMixin, TestCase):
@@ -236,3 +247,128 @@ class LecturasApiTests(_JwtMixin, TestCase):
 
     def test_notificaciones_sin_token_401(self):
         self.assertEqual(self.client.get("/api/notificaciones?mias").status_code, 401)
+
+
+class EventosApiTests(_JwtMixin, TestCase):
+    """POST /api/eventos — registro de marcas vía el service compartido."""
+    URL = "/api/eventos"
+    GUARDIA = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"  # sub del token, CON guiones
+    LAT, LNG = -33.40000000000000000, -70.56000000000000000
+
+    def setUp(self):
+        super().setUp()
+        call_command("seed_tipos_evento")  # catálogo real de tipo_evento
+        self.cp = PuntoControl.objects.create(
+            instalacion_id=10, nombre="Porton Norte",
+            lat=str(self.LAT), lng=str(self.LNG),
+            tolerancia_mts=30, validar_posicion=True,
+            qr_token="11111111-1111-1111-1111-111111111111", activo=True,
+        )
+        # Ronda activa AHORA (rango que cubre todo el día) con el punto en secuencia.
+        self.ronda = Ronda.objects.create(
+            cliente_id=1, instalacion_id=10, nombre="Ronda Día",
+            fecha_inicio=date(2026, 1, 1),
+            hora_inicio=dtime(0, 0, 0), hora_fin=dtime(23, 59, 59),
+        )
+        RondaSecuencia.objects.create(ronda=self.ronda, punto_control=self.cp, orden=1)
+
+    def _body(self, **extra):
+        body = {"qr_token": self.cp.qr_token, "lat": self.LAT, "lng": self.LNG}
+        body.update(extra)
+        return body
+
+    # ---- evento nuevo ----
+    def test_evento_nuevo_201_y_fila_con_guardia_con_guiones(self):
+        resp = self._post(self.URL, self._body(), sub=self.GUARDIA)
+        self.assertEqual(resp.status_code, 201)
+        data = resp.json()
+        self.assertEqual(data["tipo_evento"], "arribo")
+        self.assertTrue(data["dentro_geocerca"])
+
+        ev = LibroNovedades.objects.get(id=data["id"])
+        # Identidad del TOKEN, CON guiones, tal cual (igual que la web).
+        self.assertEqual(ev.guardia_keycloak_id, self.GUARDIA)
+        # Instalación DERIVADA del punto (opción a).
+        self.assertEqual(ev.instalacion_id, self.cp.instalacion_id)
+        self.assertEqual(ev.punto_control_id, self.cp.id)
+        self.assertEqual(ev.tipo_evento.codigo, "arribo")
+
+    # ---- idempotencia: reintento no duplica ----
+    def test_reintento_mismo_punto_no_duplica(self):
+        cp2 = PuntoControl.objects.create(
+            instalacion_id=10, nombre="Porton Sur", lat=str(self.LAT), lng=str(self.LNG),
+            tolerancia_mts=30, validar_posicion=True,
+            qr_token="22222222-2222-2222-2222-222222222222", activo=True,
+        )
+        RondaSecuencia.objects.create(ronda=self.ronda, punto_control=cp2, orden=2)
+
+        r1 = self._post(self.URL, self._body(), sub=self.GUARDIA)
+        r2 = self._post(self.URL, self._body(), sub=self.GUARDIA)
+        self.assertEqual(r1.status_code, 201)
+        self.assertEqual(r2.status_code, 200)
+        self.assertTrue(r2.json()["ya_registrado"])
+        # Un único arribo para ese punto.
+        self.assertEqual(
+            LibroNovedades.objects.filter(punto_control=self.cp, tipo_evento__codigo="arribo").count(),
+            1,
+        )
+
+    # ---- GPS fuera de tolerancia: NO se rechaza ----
+    def test_gps_fuera_de_tolerancia_201_arribo_invalido(self):
+        resp = self._post(self.URL, self._body(lat=self.LAT + 0.01), sub=self.GUARDIA)
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()["tipo_evento"], "arribo_invalido")
+        self.assertFalse(resp.json()["dentro_geocerca"])
+
+    def test_punto_sin_validar_posicion_201_arribo_sin_geo(self):
+        self.cp.validar_posicion = False
+        self.cp.save(update_fields=["validar_posicion"])
+        resp = self._post(self.URL, self._body(), sub=self.GUARDIA)
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()["tipo_evento"], "arribo_sin_geo")
+
+    # ---- identidad: el body NO puede suplantar al guardia ----
+    def test_body_con_guardia_se_ignora(self):
+        resp = self._post(
+            self.URL,
+            self._body(guardia_keycloak_id="99999999-9999-9999-9999-999999999999", sub="otro"),
+            sub=self.GUARDIA,
+        )
+        self.assertEqual(resp.status_code, 201)
+        ev = LibroNovedades.objects.get(id=resp.json()["id"])
+        self.assertEqual(ev.guardia_keycloak_id, self.GUARDIA)  # el del TOKEN, no el del body
+
+    # ---- validaciones ----
+    def test_sin_qr_token_400(self):
+        resp = self._post(self.URL, {"lat": self.LAT, "lng": self.LNG}, sub=self.GUARDIA)
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["codigo"], "solicitud_invalida")
+
+    def test_sin_token_401(self):
+        self.assertEqual(self.client.post(self.URL, self._body(), format="json").status_code, 401)
+
+    # ---- web vs api: mismo service -> registro equivalente ----
+    def test_web_y_api_producen_registro_equivalente(self):
+        """Llamar al service como la WEB y registrar por la API con los mismos
+        datos produce un libro_novedades equivalente (mismo punto/tipo/instalación
+        y guardia CON guiones)."""
+        from apps.comun.services.rondas import registrar_escaneo
+
+        # Vía "web": llamada directa al service (instalacion de la sesión = la del punto).
+        web = registrar_escaneo(
+            instalacion_id=self.cp.instalacion_id, guardia_keycloak_id=self.GUARDIA,
+            qr_token=self.cp.qr_token, lat=self.LAT, lng=self.LNG, texto=None,
+            ahora=dj_tz.now(),
+        )
+        ev_web = LibroNovedades.objects.get(id=web["libro_id"])
+
+        # Vía API: otro guardia (para no chocar con el bloqueo del primero).
+        otro = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+        resp = self._post(self.URL, self._body(), sub=otro)
+        ev_api = LibroNovedades.objects.get(id=resp.json()["id"])
+
+        self.assertEqual(ev_web.punto_control_id, ev_api.punto_control_id)
+        self.assertEqual(ev_web.tipo_evento_id, ev_api.tipo_evento_id)
+        self.assertEqual(ev_web.instalacion_id, ev_api.instalacion_id)
+        self.assertEqual(ev_web.guardia_keycloak_id, self.GUARDIA)
+        self.assertEqual(ev_api.guardia_keycloak_id, otro)  # cada uno con SU sub, con guiones

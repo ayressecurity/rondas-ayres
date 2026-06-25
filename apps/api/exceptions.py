@@ -26,11 +26,28 @@ def no_encontrado(mensaje, motivo="no_encontrado"):
     return exc
 
 
+def solicitud_invalida(mensaje, motivo="solicitud_invalida"):
+    """APIException 400 con mensaje claro y motivo para el log."""
+    exc = APIException(mensaje)
+    exc.status_code = 400
+    exc.motivo = motivo
+    return exc
+
+
 class DependenciaNoDisponible(APIException):
-    """503: una dependencia externa (JWKS/Keycloak) está caída o no responde."""
+    """503: una dependencia externa (JWKS/Keycloak/catálogo) no está disponible."""
     status_code = 503
     default_detail = "Servicio de identidad no disponible. Intente más tarde."
     default_code = "dependencia_no_disponible"
+
+
+def catalogo_no_disponible():
+    """503 controlado: faltan los tipo_evento sembrados (seed_tipos_evento)."""
+    exc = DependenciaNoDisponible(
+        "El catálogo de eventos no está configurado. Contacte al administrador."
+    )
+    exc.motivo = "catalogo_incompleto"
+    return exc
 
 
 # Mapeo status HTTP -> código corto y mensaje genérico (fallback si la excepción
@@ -43,6 +60,7 @@ _POR_STATUS = {
     405: ("metodo_no_permitido", "Método no permitido."),
     415: ("formato_no_soportado", "Formato no soportado."),
     429: ("demasiadas_solicitudes", "Demasiadas solicitudes."),
+    500: ("error_interno", "Error interno del servidor."),
     503: ("dependencia_no_disponible", "Servicio no disponible. Intente más tarde."),
 }
 

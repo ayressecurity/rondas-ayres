@@ -14,4 +14,6 @@ urlpatterns = [
     path("rondas", views.rondas_mias, name="rondas_mias"),
     # GET /api/notificaciones?mias — recordatorios del guardia del token.
     path("notificaciones", views.notificaciones_mias, name="notificaciones_mias"),
+    # POST /api/eventos — registra una marca (escaneo) del guardia.
+    path("eventos", views.crear_evento, name="crear_evento"),
 ]
