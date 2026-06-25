@@ -22,6 +22,9 @@ from django.utils import timezone
 POR_PAGINA = 20
 
 from apps.novedades.models import LibroNovedades, LibroNovedadesMedia, TipoMedia
+# Normalización ÚNICA de keycloak_id (sin guiones, minúsculas). Misma función
+# que usa el portero de la API: una sola fuente de verdad, sin duplicar lógica.
+from apps.cuentas.identidad import norm_keycloak_id as _norm
 
 ANIO_BASE = 2026
 MESES = [
@@ -29,11 +32,6 @@ MESES = [
     (5, "Mayo"), (6, "Junio"), (7, "Julio"), (8, "Agosto"),
     (9, "Septiembre"), (10, "Octubre"), (11, "Noviembre"), (12, "Diciembre"),
 ]
-
-
-def _norm(kc):
-    """Normaliza un keycloak_id para comparar: sin guiones, en minúsculas."""
-    return (kc or "").replace("-", "").lower()
 
 
 def _nombres_de_guardias(eventos):

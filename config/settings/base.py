@@ -56,6 +56,8 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Log estructurado de cada request a /api/ (sub, metodo, ruta, status, motivo).
+    "apps.api.middleware.ApiLoggingMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -133,6 +135,22 @@ LOGOUT_REDIRECT_URL = "/"
 # Portal (Servidor 2): destino tras cerrar sesion. Vacio = volver a Rondas.
 PORTAL_URL = env("PORTAL_URL", default="")
 
+# ---- OIDC para la API movil (validacion de JWT, stateless) ----
+# La API NO usa sesion: valida el Bearer token en cada request contra el JWKS
+# de Keycloak (reutiliza OIDC_OP_JWKS_ENDPOINT de arriba).
+# Issuer esperado en el claim 'iss' del token.
+OIDC_OP_ISSUER = env(
+    "OIDC_OP_ISSUER",
+    default="https://sso.ayressecurity.cl/realms/ayres-security",
+)
+# Audiencia esperada (claim 'aud'). Vacio = NO se valida aud (hoy probamos con
+# rondas-web-test); cuando exista el client movil, se pone aqui sin tocar codigo.
+OIDC_AUDIENCE = env("OIDC_AUDIENCE", default="")
+# Tolerancia de reloj (clock skew) en segundos para exp/iat/nbf.
+OIDC_LEEWAY_SECONDS = env.int("OIDC_LEEWAY_SECONDS", default=30)
+# Cuanto cachear el JWKS en memoria (segundos) antes de re-descargarlo.
+OIDC_JWKS_CACHE_SECONDS = env.int("OIDC_JWKS_CACHE_SECONDS", default=3600)
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
@@ -167,3 +185,73 @@ if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+
+# ---- Django REST Framework (API movil, stateless) ----
+# La API NO usa sesion ni cookies: SOLO el Bearer token de Keycloak.
+REST_FRAMEWORK = {
+    # Unica forma de autenticarse en la API: nuestro portero JWT (JWKS Keycloak).
+    # NO ponemos SessionAuthentication ni BasicAuthentication.
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "apps.api.authentication.KeycloakJWTAuthentication",
+    ],
+    # Por defecto TODO endpoint exige usuario autenticado.
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    # Solo JSON (sin el Browsable API HTML).
+    "DEFAULT_RENDERER_CLASSES": [
+        "rest_framework.renderers.JSONRenderer",
+    ],
+    # Errores siempre en el mismo formato JSON ({"error": {...}}).
+    "EXCEPTION_HANDLER": "apps.api.exceptions.api_exception_handler",
+}
+
+# ---- Logging ----
+# Consola SIEMPRE (local/develop/prod la capturan: runserver en local; systemd
+# -> journald en el servidor, se ve con `journalctl -u ayres360.service`).
+# Opcional: si LOG_FILE viene en el .env, ademas escribe a archivo con rotacion
+# (util en el servidor si se prefiere un fichero a journald).
+LOG_FILE = env("LOG_FILE", default="")
+API_LOG_LEVEL = env("API_LOG_LEVEL", default="INFO")
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        # Formato legible y "grepeable": fecha nivel logger mensaje.
+        "estructurado": {
+            "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "estructurado",
+        },
+    },
+    "loggers": {
+        # Todo lo de la API (portero + requests) cae aqui.
+        "apps.api": {
+            "handlers": ["console"],
+            "level": API_LOG_LEVEL,
+            "propagate": False,
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "WARNING",
+    },
+}
+
+# Logging a archivo con rotacion (solo si se define LOG_FILE en el .env).
+# 5 MB por archivo, 5 backups. Pensado para el servidor.
+if LOG_FILE:
+    LOGGING["handlers"]["archivo"] = {
+        "class": "logging.handlers.RotatingFileHandler",
+        "filename": LOG_FILE,
+        "maxBytes": 5 * 1024 * 1024,
+        "backupCount": 5,
+        "formatter": "estructurado",
+    }
+    LOGGING["loggers"]["apps.api"]["handlers"].append("archivo")
+    LOGGING["root"]["handlers"].append("archivo")

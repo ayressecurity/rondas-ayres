@@ -23,8 +23,10 @@ Este repo es el **Servidor 4 · Rondas** (`rondas.ayressecurity.cl`).
 - **`sub`** = UUID único e inmutable del usuario → se guarda como **`keycloak_id`**.
   La relación entre sistemas es **lógica por UUID, nunca FK cruzada**. El alta local es JIT.
 - **groups = qué se ve** (apps/enlaces). **roles = qué se puede hacer** (ver/crear/editar/eliminar).
+  Los roles están dormidos aún; el gateo hoy es por `super_admin` (marca is_staff/is_superuser).
 - Roles operativos Rondas: Guardia / Supervisor / Administrador (mapeados sobre roles reales del realm).
 - Flujo: usuario → Portal → Keycloak (login) → vuelve con tokens (PKCE) → la app valida el JWT (JWKS) → acceso.
+- ⚠️ PENDIENTE: documentar el "subflow" de Keycloak (qué subflow, en qué flujo de autenticación vive, qué hace).
 
 ## 3. Stack y entornos
 - **Python 3.13** · Django 5.2.15 · DRF · mozilla-django-oidc · django-environ · whitenoise.
@@ -44,8 +46,10 @@ Este repo es el **Servidor 4 · Rondas** (`rondas.ayressecurity.cl`).
   Idénticas en local y prod, **SIN FK**, `id` = id de Ayres, **solo-lectura** desde la web.
 - Código: `apps/espejo/models.py` (Cliente, Instalacion), `apps/espejo/sync.py` (upsert + borrado),
   `apps/espejo/management/commands/sync_ayres.py`, lector en `apps/comun/ayres.py`.
+- Origen (solo lectura): `tenant_ayres_security` en `172.16.40.99:3306`, user `rondas_ro`. Filtro por razón
+  social "MUNICIPALIDAD DE LAS CONDES" (`SYNC_CLIENTES_RAZON`). `instalacion.codigo` (AYR-00XX) NO se sobreescribe.
 - Tiempo real: lo ideal es que **Ayres emita webhook/evento por cada CRUD** → `POST /interno/sync/ayres`.
-  Fallback: polling del comando `sync_ayres`. (Coordinar con Ayres.)
+  Fallback: polling del comando `sync_ayres`. (Coordinar con Ayres.) Hoy es MANUAL.
 
 ## 6. Estructura del proyecto
 ```
@@ -55,12 +59,16 @@ docs/                 planificacion-rondas.docx · rondas_schema.dbml
 config/settings/      base.py · local.py · develop.py · prod.py · __init__.py
 config/               urls.py · wsgi.py · asgi.py · __init__.py
 apps/cuentas          Usuario (keycloak_id, zona, turno) + auth_backend.py (vincula por sub)
-apps/comun            base/dashboard + ayres.py (lector de Ayres)
+apps/comun            base/dashboard + menu.py + decoradores.py + ayres.py (lector de Ayres)
 apps/espejo           Cliente, Instalacion (réplica) + sync.py + management/commands/sync_ayres.py
-apps/instalaciones    módulos 1-2-3 (leen del espejo; guardias por API a Ayres)
-apps/checkpoints      módulo 4 — PuntoControl + QR + PDF
+apps/clientes         módulo 1 — selección de cliente (fija cliente_id en sesión)
+apps/instalaciones    módulos 2-3 — instalaciones de un cliente (fija instalacion_id en sesión)
+apps/checkpoints      módulo 4 — PuntoControl + QR + imprimir 4×7 + configurar_qr (cámara/GPS)
 apps/rondas           módulos 5-6 — Ronda, RondaSecuencia, RondaGuardia, Programacion, ProgramacionHorario, Notificacion
-apps/novedades        módulos 7-8 — TipoEvento, LibroNovedades, LibroNovedadesMedia + reportes/export
+apps/escaner          simulador de ejecución (super_admin) — RondaEjecucion (cámara + GPS)
+apps/novedades        módulos 7-8 — TipoEvento, LibroNovedades, LibroNovedadesMedia + seed_tipos_evento
+apps/informes         Informe de Rondas y Novedades (base común; filtros, paginador, export Excel)
+apps/reportar_novedad herramienta super_admin — crea novedades con N fotos (getUserMedia)
 apps/control_vehicular Vehiculo (reemplaza el Google Form)
 apps/personas         PENDIENTE (solo PK)
 apps/dispositivos     PENDIENTE (solo PK)
@@ -73,18 +81,22 @@ media/                fotos/audio/video (dev); en prod object storage
 ## 7. Modelo de datos (resumen; esquema completo en docs/)
 Capas: **espejo** (cliente, instalacion) · **catálogo** (tipo_evento) · **identidad** (usuario) ·
 **configuración** (punto_control, ronda, ronda_secuencia, ronda_guardia, programacion,
-programacion_horario, notificacion) · **ejecución** (libro_novedades, libro_novedades_media) ·
+programacion_horario, notificacion) · **ejecución** (ronda_ejecucion, libro_novedades, libro_novedades_media) ·
 **control vehicular** (vehiculo).
 - `libro_novedades` es la tabla caliente (alto volumen): índice (instalacion_id, timestamp_evento);
   `timestamp_evento` (terreno) + `timestamp_servidor` (offline). La leen los informes 7 y 8.
-- `usuario` extiende AbstractUser: `keycloak_id` (UUID), `zona`, `turno`.
+- `usuario` (tabla `cuentas_usuario`) extiende AbstractUser: `keycloak_id` char(32) SIN guiones
+  (con guiones en libro_novedades/ronda_*/vehiculo; los informes normalizan), `zona`, `turno`.
+- `punto_control`: lat/lng decimal(20,17), qr_token uuid4 estable (contenido del QR = solo el token).
+- `ronda`: orden_aleatorio (sistema vs estipulada), hora_inicio/hora_fin (rango de turno, puede cruzar medianoche).
 - `vehiculo` (sin FK): desplazamiento enum(entrada/salida), recinto, ppu varchar(30), kilometraje,
   tipo_vehiculo enum(motocicleta/furgon/auto/station_wagon/camioneta/mini_bus), nombre_conductor,
   codigo_conductor, turno enum(1er/2do/3er/intermedio/largo/especial), registrado_keycloak_id, creado_en.
 - `persona` y `dispositivo`: PENDIENTES, **solo PK**.
 - **FK reales SOLO entre tablas propias de Rondas.** Espejo, vehiculo, persona y dispositivo: SIN FK.
   Referencias al espejo y a Keycloak = lógicas (por id/UUID, indexadas).
-- Catálogo de eventos: sesión_inicio/fin · arribo/partida (V04) · novedad (V03) · código_no_existe (_NE).
+- Catálogo de eventos (seed `seed_tipos_evento`): sesion_inicio, sesion_fin, arribo, novedad,
+  codigo_no_existe, arribo_sin_geo, arribo_invalido.
 - Detalle exhaustivo (campos de cliente/instalacion, etc.): ver `docs/planificacion-rondas.docx` y `docs/rondas_schema.dbml`.
 
 ## 8. Endpoints
@@ -94,14 +106,23 @@ programacion_horario, notificacion) · **ejecución** (libro_novedades, libro_no
 - Interno: `POST /interno/sync/ayres` (aplica el cambio recibido desde Ayres al espejo).
 
 ## 9. Estado actual
-- Esqueleto creado y validado: `config/settings/` split, `.env`, apps `cuentas` y `comun`,
-  modelo `Usuario` propio migrado. Corre en local con SQLite.
-- Client de prueba en Keycloak: `rondas-web-test` (confidencial), redirect `http://localhost:8000/oidc/callback/`.
+- Develop vivo en `https://rondas-dev.ayressecurity.cl` (IP `172.16.41.41`). SSO end-to-end OK.
+  Sync con 48 instalaciones de Las Condes. Servicio systemd `ayres360.service`.
+- Client develop en Keycloak: `rondas-web-test` (confidencial), redirect `https://rondas-dev.ayressecurity.cl/oidc/callback/`.
+- Navegación 3 niveles (Cliente → Instalación → Módulos) ✅, sidebar dinámico vía `menu.py`.
+- Checkpoints ✅ (CRUD, soft delete, QR, foto, Ver mapa, imprimir 4×7, Configurar QR).
+- Rondas ✅ (Día/Noche, aleatoria vs estipulada, programación de alertas, rango horario).
+- Escáner ✅ (super_admin: GPS, auto-turno por hora del servidor, haversine, bloqueo de re-escaneo por guardia+ronda+turno).
+- Informes de Rondas y Novedades ✅ (filtros día/rango/mes/año, paginador 20 ES, export Excel on-brand).
+- Reportar novedad ✅ (super_admin: observación + N fotos con cámara).
 
 ## 10. Próximos pasos
-1. Dashboard real (sidebar + navbar + plantillas base) — diseño profesional.
-2. Enganchar el login SSO (botón) y probar con `rondas-web-test`.
-3. App `espejo` + `sync_ayres`. Luego checkpoints, rondas, novedades, control_vehicular, API móvil.
+1. Mapa Google Maps EMBEBIDO en Checkpoints → requiere API key de Google (sistemas). Hoy solo links "Ver mapa".
+2. Webhook/cron de sincronización con Ayres (hoy manual).
+3. Interfaz de Control vehicular; modelos reales de Personas y Dispositivos; avanzar la API móvil (DRF + JWT).
+4. Keycloak: documentar subflow; Identity Providers (punto 14); roles compuestos / mapeo roles↔grupos; certbot/SSL.
+5. Configurar entorno **prod**. Confirmar permisos del usuario del servicio para MEDIA en Nginx (Gabriel).
+6. ⚠️ Rotar client secret y claves de BD expuestas en chats previos.
 
 ## 11. Reglas duras (DO / DON'T)
 - NO poner FK en espejo / vehiculo / persona / dispositivo.
@@ -140,5 +161,3 @@ Reglas de UI:
 - Botón secundario: blanco con borde gris, texto #333.
 - Estética profesional, limpia y seria (empresa de seguridad). Contraste y legibilidad siempre.
 - Definir estos colores como variables CSS en static/css/dashboard.css (ej. --rojo:#CC3333; --oscuro:#333333) y reutilizarlas.
-````
-````
