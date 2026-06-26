@@ -1,4 +1,6 @@
 {# Filtros de fecha (GET) — compartido por los informes. #}
+{# Solo dos controles: AÑO y RANGO (calendario Desde/Hasta). NO hay control de #}
+{# "día": el día actual es un default automático e invisible (ver base.py). #}
 <form method="get" class="filtros-informe">
     <div class="filtro-campo">
         <label for="f-anio">Año</label>
@@ -10,15 +12,6 @@
         </select>
     </div>
     <div class="filtro-campo">
-        <label for="f-mes">Mes</label>
-        <select id="f-mes" name="mes">
-            <option value="">Todos</option>
-            {% for num, nombre in meses %}
-                <option value="{{ num }}" {% if filtro.mes == num|stringformat:'s' %}selected{% endif %}>{{ nombre }}</option>
-            {% endfor %}
-        </select>
-    </div>
-    <div class="filtro-campo">
         <label for="f-fini">Desde</label>
         <input type="date" id="f-fini" name="fini" value="{{ filtro.fini }}">
     </div>
@@ -26,14 +19,10 @@
         <label for="f-ffin">Hasta</label>
         <input type="date" id="f-ffin" name="ffin" value="{{ filtro.ffin }}">
     </div>
-    <div class="filtro-campo">
-        <label for="f-dia">Día exacto</label>
-        <input type="date" id="f-dia" name="dia" value="{{ filtro.dia }}">
-    </div>
     <div class="filtro-acciones">
         <button type="submit" class="btn btn-primario">Filtrar</button>
         <a href="{{ request.path }}" class="btn btn-secundario">Limpiar</a>
     </div>
 </form>
 <p class="filtro-resumen">Mostrando: <strong>{{ filtro_label }}</strong>
-    <span class="filtro-ayuda">(precedencia: día → rango → mes+año → año)</span></p>
+    <span class="filtro-ayuda">(por defecto, hoy · precedencia: año → rango)</span></p>

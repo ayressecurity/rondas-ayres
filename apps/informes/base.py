@@ -78,32 +78,33 @@ def _rango_y_label(request):
     """Lee los filtros de fecha del GET -> (rango, etiqueta, valores).
 
     rango = (inicio, fin) aware en Santiago, o None (sin filtro = todo).
-    Precedencia: día > rango libre (desde/hasta) > mes(+año) > año.
     valores repinta el formulario.
 
-    DEFAULT AUTOMÁTICO: si NO hay NINGÚN valor de fecha (primera carga, o el
-    usuario limpió/no seleccionó nada) se muestran los eventos de HOY (Santiago).
-    Es solo un default: NO se inyecta en `valores` (no es un control propio), así
-    cualquier filtro que el usuario aplique (rango/semana, mes, año, fechas) manda
-    SIN que "hoy" lo pise. El default vuelve solo cuando no hay filtro activo.
+    Solo DOS filtros visibles: AÑO y RANGO (fini/ffin, el calendario). El "día"
+    NO es un filtro: el día actual es un DEFAULT AUTOMÁTICO e INVISIBLE.
+
+    Precedencia: año > rango > HOY (default).
+    - Si viene año -> filtra por año.
+    - Si viene rango (fini y ffin) -> filtra por ese rango.
+    - Si NO viene ninguno (primera carga o filtros limpios) -> default = HOY
+      (Santiago). El default va SOLO como último recurso, nunca mezclado con
+      año/rango, y no se inyecta en `valores` (no es un control).
     """
     g = request.GET
-    dia = (g.get("dia") or "").strip()
     fini = (g.get("fini") or "").strip()   # fecha inicio del rango
     ffin = (g.get("ffin") or "").strip()   # fecha fin del rango
-    mes = (g.get("mes") or "").strip()
     anio = (g.get("anio") or "").strip()
-    valores = {"dia": dia, "fini": fini, "ffin": ffin, "mes": mes, "anio": anio}
+    valores = {"fini": fini, "ffin": ffin, "anio": anio}
 
     # Sin NINGÚN valor de fecha -> default automático = HOY (último recurso).
-    if not any([dia, fini, ffin, mes, anio]):
+    if not any([fini, ffin, anio]):
         hoy = timezone.localtime(timezone.now()).date()
         return (_aware(hoy), _aware(hoy + timedelta(days=1))), f"Día {hoy.isoformat()}", valores
 
-    if dia:  # día exacto (YYYY-MM-DD)
+    if anio:  # año completo
         try:
-            d = date.fromisoformat(dia)
-            return (_aware(d), _aware(d + timedelta(days=1))), f"Día {d.isoformat()}", valores
+            a = int(anio)
+            return (_aware(date(a, 1, 1)), _aware(date(a + 1, 1, 1))), f"Año {a}", valores
         except ValueError:
             pass
 
@@ -115,22 +116,6 @@ def _rango_y_label(request):
                 d1, d2 = d2, d1  # tolera fechas invertidas
             etiqueta = f"{d1.isoformat()} a {d2.isoformat()}"
             return (_aware(d1), _aware(d2 + timedelta(days=1))), etiqueta, valores
-        except ValueError:
-            pass
-
-    if anio and mes:  # mes + año
-        try:
-            a, m = int(anio), int(mes)
-            inicio = date(a, m, 1)
-            fin = date(a + 1, 1, 1) if m == 12 else date(a, m + 1, 1)
-            return (_aware(inicio), _aware(fin)), f"{dict(MESES)[m]} {a}", valores
-        except (ValueError, KeyError):
-            pass
-
-    if anio:  # año completo
-        try:
-            a = int(anio)
-            return (_aware(date(a, 1, 1)), _aware(date(a + 1, 1, 1))), f"Año {a}", valores
         except ValueError:
             pass
 
