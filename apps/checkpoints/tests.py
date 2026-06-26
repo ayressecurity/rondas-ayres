@@ -4,11 +4,33 @@ que configurar_qr NO devuelva 500 si falta la instalación en sesión (QA #2, #3
 """
 from unittest.mock import patch
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase, override_settings
 
 from apps.checkpoints.forms import PuntoControlForm
+from apps.checkpoints.models import PuntoControl
+
+
+class FotoUrlTests(TestCase):
+    """foto_url resuelve la URL pública (vía MEDIA) o '' si no hay foto (QA fix)."""
+
+    def _cp(self, foto_path=None):
+        return PuntoControl(
+            instalacion_id=10, nombre="P", lat="-33.4", lng="-70.5",
+            tolerancia_mts=30, qr_token="x", foto_path=foto_path,
+        )
+
+    def test_con_foto_devuelve_url_publica(self):
+        cp = self._cp("checkpoints/abc_foto.png")
+        # Debe empezar por MEDIA_URL y terminar con la ruta del archivo.
+        self.assertTrue(cp.foto_url.startswith(settings.MEDIA_URL))
+        self.assertTrue(cp.foto_url.endswith("checkpoints/abc_foto.png"))
+
+    def test_sin_foto_devuelve_vacio(self):
+        self.assertEqual(self._cp(None).foto_url, "")
+        self.assertEqual(self._cp("").foto_url, "")
 
 
 class PuntoControlFormTests(TestCase):

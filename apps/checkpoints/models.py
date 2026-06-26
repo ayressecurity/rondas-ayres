@@ -2,6 +2,7 @@
 Modulo 4 — punto_control. Fuente: docs/rondas_schema.dbml.
 instalacion_id = referencia al espejo (SIN FK).
 """
+from django.core.files.storage import default_storage
 from django.db import models
 
 # Tipo único de punto de control por ahora: lo fija SIEMPRE el backend (el campo
@@ -31,3 +32,11 @@ class PuntoControl(models.Model):
 
     def __str__(self):
         return self.nombre
+
+    @property
+    def foto_url(self):
+        """URL pública de la foto vía MEDIA (la sirve Django en local / Nginx en
+        server), o '' si el punto no tiene foto. foto_path es CharField (la ruta
+        relativa), por eso resolvemos la URL con default_storage, igual que los
+        informes (no es FileField, no tiene .url)."""
+        return default_storage.url(self.foto_path) if self.foto_path else ""

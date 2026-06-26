@@ -55,8 +55,12 @@
                             </svg>
                             Ver mapa
                         </a>
-                        {# Ver imagen: PARTE 4 (aún sin acción). #}
-                        <a href="#" class="accion-link">Ver imagen</a>
+                        {# Ver imagen: abre la foto del punto (vía MEDIA) en pestaña
+                           nueva. Solo si el punto tiene foto (si no, sin enlace). #}
+                        {% if cp.foto_url %}
+                        <a href="{{ cp.foto_url }}" class="accion-link accion-imagen"
+                           target="_blank" rel="noopener">Ver imagen</a>
+                        {% endif %}
                     </td>
                 </tr>
             {% endfor %}
