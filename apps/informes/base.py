@@ -81,27 +81,24 @@ def _rango_y_label(request):
     Precedencia: día > rango libre (desde/hasta) > mes(+año) > año.
     valores repinta el formulario.
 
-    POR DEFECTO (primera carga, GET sin NINGÚN parámetro de fecha) el rango es el
-    DÍA DE HOY (Santiago). Si el usuario envía el formulario con todo vacío
-    (las claves vienen presentes pero sin valor) se respeta su elección = Todos.
+    DEFAULT AUTOMÁTICO: si NO hay NINGÚN valor de fecha (primera carga, o el
+    usuario limpió/no seleccionó nada) se muestran los eventos de HOY (Santiago).
+    Es solo un default: NO se inyecta en `valores` (no es un control propio), así
+    cualquier filtro que el usuario aplique (rango/semana, mes, año, fechas) manda
+    SIN que "hoy" lo pise. El default vuelve solo cuando no hay filtro activo.
     """
     g = request.GET
-
-    # Primera carga sin filtros: ninguna clave de fecha en el GET -> hoy.
-    # (El formulario, al enviarse, SIEMPRE manda estas claves aunque vacías; un
-    # enlace directo al informe no manda ninguna.)
-    claves_fecha = ("dia", "fini", "ffin", "mes", "anio")
-    if not any(k in g for k in claves_fecha):
-        hoy = timezone.localtime(timezone.now()).date()
-        valores = {"dia": hoy.isoformat(), "fini": "", "ffin": "", "mes": "", "anio": ""}
-        return (_aware(hoy), _aware(hoy + timedelta(days=1))), f"Día {hoy.isoformat()}", valores
-
     dia = (g.get("dia") or "").strip()
     fini = (g.get("fini") or "").strip()   # fecha inicio del rango
     ffin = (g.get("ffin") or "").strip()   # fecha fin del rango
     mes = (g.get("mes") or "").strip()
     anio = (g.get("anio") or "").strip()
     valores = {"dia": dia, "fini": fini, "ffin": ffin, "mes": mes, "anio": anio}
+
+    # Sin NINGÚN valor de fecha -> default automático = HOY (último recurso).
+    if not any([dia, fini, ffin, mes, anio]):
+        hoy = timezone.localtime(timezone.now()).date()
+        return (_aware(hoy), _aware(hoy + timedelta(days=1))), f"Día {hoy.isoformat()}", valores
 
     if dia:  # día exacto (YYYY-MM-DD)
         try:
