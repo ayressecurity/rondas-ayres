@@ -305,6 +305,40 @@ class EventosApiTests(_JwtMixin, TestCase):
         self.assertEqual(ev.punto_control_id, self.cp.id)
         self.assertEqual(ev.tipo_evento.codigo, "arribo")
 
+    # ---- API: no cruza entre instalaciones aunque exista otra "Ronda Día" ----
+    def test_api_no_cruza_entre_instalaciones(self):
+        from datetime import timedelta
+
+        from apps.comun.services.rondas import iniciar_o_reusar_ejecucion
+        from apps.escaner.models import RondaEjecucion
+
+        # Otra instalación (11) con su propia "Ronda Día" activa y su punto.
+        cp_b = PuntoControl.objects.create(
+            instalacion_id=11, nombre="Porton B", lat=str(self.LAT), lng=str(self.LNG),
+            tolerancia_mts=30, validar_posicion=True,
+            qr_token="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", activo=True,
+        )
+        ronda_b = Ronda.objects.create(
+            cliente_id=1, instalacion_id=11, nombre="Ronda Día",
+            fecha_inicio=date(2026, 1, 1), hora_inicio=dtime(0, 0, 0), hora_fin=dtime(23, 59, 59),
+        )
+        RondaSecuencia.objects.create(ronda=ronda_b, punto_control=cp_b, orden=1)
+
+        # El mismo guardia tiene una ejecución en curso en B, MÁS reciente.
+        ej_b, _v, _e = iniciar_o_reusar_ejecucion(
+            instalacion_id=11, guardia_keycloak_id=self.GUARDIA, ahora=dj_tz.now(),
+        )
+        RondaEjecucion.objects.filter(id=ej_b.id).update(
+            iniciada_en=dj_tz.now() + timedelta(minutes=5)
+        )
+
+        # POST con el QR de un punto de A (10) -> se registra contra la ronda de A.
+        resp = self._post(self.URL, self._body(), sub=self.GUARDIA)
+        self.assertEqual(resp.status_code, 201)
+        ev = LibroNovedades.objects.get(id=resp.json()["id"])
+        self.assertEqual(ev.ronda_id, self.ronda.id)      # ronda de A...
+        self.assertNotEqual(ev.ronda_id, ronda_b.id)      # ...nunca la de B
+
     # ---- idempotencia: reintento no duplica ----
     def test_reintento_mismo_punto_no_duplica(self):
         cp2 = PuntoControl.objects.create(

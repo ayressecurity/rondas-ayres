@@ -115,6 +115,76 @@ class ServiceRondasTests(TestCase):
         # NO se escribió NADA en libro_novedades.
         self.assertEqual(LibroNovedades.objects.count(), antes)
 
+    # ---- CRUCE ENTRE INSTALACIONES (el bug) ----
+    def _instalacion_b_con_ronda(self):
+        """Crea instalación B=11 con su propia 'Ronda Día' activa ahora y su punto.
+        Mismo nombre y horario que la de A=10, pero en otra instalación."""
+        cp_b = PuntoControl.objects.create(
+            instalacion_id=11, nombre="Porton B", lat=str(LAT), lng=str(LNG),
+            tolerancia_mts=30, validar_posicion=True,
+            qr_token="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", activo=True,
+        )
+        ronda_b = Ronda.objects.create(
+            cliente_id=1, instalacion_id=11, nombre="Ronda Día",
+            fecha_inicio=date(2026, 1, 1),
+            hora_inicio=time(0, 0, 0), hora_fin=time(23, 59, 59),
+        )
+        RondaSecuencia.objects.create(ronda=ronda_b, punto_control=cp_b, orden=1)
+        return cp_b, ronda_b
+
+    def test_no_cruza_entre_instalaciones_operando_en_A(self):
+        cp_b, ronda_b = self._instalacion_b_con_ronda()
+
+        # El MISMO guardia inicia en A (10) y luego en B (11).
+        iniciar_o_reusar_ejecucion(instalacion_id=10, guardia_keycloak_id=GUARDIA, ahora=timezone.now())
+        ej_b, _v, _e = iniciar_o_reusar_ejecucion(instalacion_id=11, guardia_keycloak_id=GUARDIA, ahora=timezone.now())
+        # Forzamos que la ejecución de B sea la MÁS reciente: así, sin el fix,
+        # _ejecucion_en_curso(guardia) devolvería la de B (el cruce que causaba el bug).
+        RondaEjecucion.objects.filter(id=ej_b.id).update(
+            iniciada_en=timezone.now() + timedelta(minutes=5)
+        )
+
+        # Operando en A, escanear un punto de A.
+        res = registrar_escaneo(
+            instalacion_id=10, guardia_keycloak_id=GUARDIA,
+            qr_token=self.cp.qr_token, lat=LAT, lng=LNG, texto=None, ahora=timezone.now(),
+        )
+        self.assertEqual(res["resultado"], "ok")
+        self.assertTrue(res["pertenece"])               # el punto SÍ pertenece a la ronda de A
+        self.assertEqual(res["progreso"]["escaneados"], 1)
+        ev = self._ultimo_evento()
+        self.assertEqual(ev.ronda_id, self.ronda.id)    # ronda de A...
+        self.assertNotEqual(ev.ronda_id, ronda_b.id)    # ...NUNCA la de B
+
+    def test_no_cruza_entre_instalaciones_operando_en_B(self):
+        cp_b, ronda_b = self._instalacion_b_con_ronda()
+
+        iniciar_o_reusar_ejecucion(instalacion_id=11, guardia_keycloak_id=GUARDIA, ahora=timezone.now())
+        ej_a, _v, _e = iniciar_o_reusar_ejecucion(instalacion_id=10, guardia_keycloak_id=GUARDIA, ahora=timezone.now())
+        RondaEjecucion.objects.filter(id=ej_a.id).update(
+            iniciada_en=timezone.now() + timedelta(minutes=5)  # A más reciente
+        )
+
+        # Operando en B, escanear el punto de B -> resuelve la ronda de B.
+        res = registrar_escaneo(
+            instalacion_id=11, guardia_keycloak_id=GUARDIA,
+            qr_token=cp_b.qr_token, lat=LAT, lng=LNG, texto=None, ahora=timezone.now(),
+        )
+        self.assertEqual(res["resultado"], "ok")
+        self.assertTrue(res["pertenece"])
+        self.assertEqual(self._ultimo_evento().ronda_id, ronda_b.id)
+
+    def test_punto_de_B_operando_en_A_es_rechazado(self):
+        cp_b, _ronda_b = self._instalacion_b_con_ronda()
+        antes = LibroNovedades.objects.count()
+        # Operando en A (10), escaneo un QR de B (11) -> rechazo, sin escribir.
+        res = registrar_escaneo(
+            instalacion_id=10, guardia_keycloak_id=GUARDIA,
+            qr_token=cp_b.qr_token, lat=LAT, lng=LNG, texto=None, ahora=timezone.now(),
+        )
+        self.assertEqual(res["resultado"], "punto_otra_instalacion")
+        self.assertEqual(LibroNovedades.objects.count(), antes)
+
     # ---- sin ronda activa (decisión #8) ----
     def test_sin_ronda_activa_no_registra(self):
         # Punto de una instalación SIN ronda activa -> rechazo, sin escribir nada.

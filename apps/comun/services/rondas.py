@@ -71,23 +71,27 @@ def _en_rango(t, ini, fin):
 
 
 def _ronda_para_ahora(instalacion_id):
-    """Ronda activa de la instalación cuyo rango horario contiene la hora actual
-    de Santiago (hora del SERVIDOR, no del navegador). None si ninguna aplica."""
+    """Ronda activa DE ESTA INSTALACIÓN cuyo rango horario contiene la hora actual
+    de Santiago (hora del SERVIDOR, no del navegador). None si ninguna aplica.
+
+    SIEMPRE filtra por instalacion_id: es imposible que devuelva una ronda de otra
+    instalación, aunque exista otra ronda con el MISMO nombre y horario en otra
+    instalación.
+
+    Desempate determinista (caso secundario): si dos rondas de la MISMA
+    instalación solapan horario, se elige la de mayor id (la creada más
+    recientemente). En el flujo normal (Día/Noche sin solape) solo una calza."""
     ahora = timezone.localtime(timezone.now()).time()
-    rondas = (
-        Ronda.objects
-        .filter(
+    candidatas = [
+        r for r in Ronda.objects.filter(
             instalacion_id=instalacion_id,
             estado=EstadoGenerico.ACTIVA,
             hora_inicio__isnull=False,
             hora_fin__isnull=False,
         )
-        .order_by("nombre")
-    )
-    for r in rondas:
-        if _en_rango(ahora, r.hora_inicio, r.hora_fin):
-            return r
-    return None
+        if _en_rango(ahora, r.hora_inicio, r.hora_fin)
+    ]
+    return max(candidatas, key=lambda r: r.id) if candidatas else None
 
 
 def _aware(fecha, hora):
@@ -114,11 +118,22 @@ def _ventana_turno(ronda, ref):
     return _aware(hoy - timedelta(days=1), ini), _aware(hoy, fin)  # madrugada -> inicio ayer
 
 
-def _ejecucion_en_curso(guardia_keycloak_id):
-    """Última ronda_ejecucion en curso del guardia (o None)."""
+def _ejecucion_en_curso(guardia_keycloak_id, instalacion_id):
+    """Última ronda_ejecucion en curso del guardia EN ESTA INSTALACIÓN (o None).
+
+    Filtra SIEMPRE por instalacion_id: si el mismo guardia tiene ejecuciones en
+    curso en VARIAS instalaciones (caso super_admin), jamás se devuelve la de otra
+    instalación. Sin este filtro, se elegía la ejecución más reciente del guardia
+    aunque fuera de OTRA instalación, registrando el evento contra la ronda
+    equivocada (ese era el bug de cruce entre instalaciones)."""
     return (
         RondaEjecucion.objects
-        .filter(guardia_keycloak_id=guardia_keycloak_id, estado=RondaEjecucion.Estado.EN_CURSO)
+        .select_related("ronda")  # _ventana_turno lee ejecucion.ronda sin query extra
+        .filter(
+            guardia_keycloak_id=guardia_keycloak_id,
+            instalacion_id=instalacion_id,
+            estado=RondaEjecucion.Estado.EN_CURSO,
+        )
         .order_by("-iniciada_en")
         .first()
     )
@@ -240,8 +255,10 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
     y luego respondía 404).
     """
     # Ejecución en curso (si la hay): sus escaneos se etiquetan con su ronda_id.
-    # La ventana del turno se ancla a cuándo se inició esa ejecución.
-    ejecucion = _ejecucion_en_curso(guardia_keycloak_id)
+    # La ventana del turno se ancla a cuándo se inició esa ejecución. SIEMPRE
+    # acotada a la instalación de operación (instalacion_id), para que nunca se
+    # resuelva la ronda/ejecución de OTRA instalación.
+    ejecucion = _ejecucion_en_curso(guardia_keycloak_id, instalacion_id)
     ronda_id_evento = ejecucion.ronda_id if ejecucion else None
     ventana = _ventana_turno(ejecucion.ronda, ejecucion.iniciada_en) if ejecucion else None
 
