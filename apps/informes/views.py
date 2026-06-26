@@ -12,6 +12,7 @@ from django.utils import timezone
 from django.utils.text import slugify
 
 from openpyxl import Workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -19,6 +20,15 @@ from openpyxl.utils import get_column_letter
 from apps.comun.decoradores import requiere_instalacion
 from apps.novedades.models import CategoriaEvento, LibroNovedadesMedia, TipoMedia
 from .base import eventos_filtrados, render_informe
+
+
+def _limpiar_celda(valor):
+    """Quita caracteres de control ilegales para XML/openpyxl (\\x00-\\x08, \\x0b,
+    \\x0c, \\x0e-\\x1f). Un texto creado por la API móvil con uno de esos chars
+    rompería el export (IllegalCharacterError); aquí se sanea sin alterar el resto."""
+    if isinstance(valor, str):
+        return ILLEGAL_CHARACTERS_RE.sub("", valor)
+    return valor
 
 
 def _filtro_rondas(qs):
@@ -94,7 +104,7 @@ def _exportar_excel(request, *, titulo, aplica_filtro, slug_base):
     # Título (fila 1, combinada) con instalación y rango de fechas filtrado.
     n_cols = len(COLUMNAS)
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n_cols)
-    celda_titulo = ws.cell(row=1, column=1, value=f"{titulo} — {instalacion} — {etiqueta}")
+    celda_titulo = ws.cell(row=1, column=1, value=_limpiar_celda(f"{titulo} — {instalacion} — {etiqueta}"))
     celda_titulo.font = Font(bold=True, size=13, color=ROJO_MARCA)
     celda_titulo.alignment = Alignment(horizontal="left", vertical="center")
 
@@ -115,9 +125,9 @@ def _exportar_excel(request, *, titulo, aplica_filtro, slug_base):
     for ev in eventos:
         ws.cell(row=fila, column=1,
                 value=timezone.localtime(ev.timestamp_evento).strftime("%Y-%m-%d %H:%M:%S"))
-        ws.cell(row=fila, column=2, value=ev.tipo_evento.nombre)
-        ws.cell(row=fila, column=3, value=ev.punto_control.nombre if ev.punto_control else "—")
-        ws.cell(row=fila, column=4, value=ev.guardia_nombre)
+        ws.cell(row=fila, column=2, value=_limpiar_celda(ev.tipo_evento.nombre))
+        ws.cell(row=fila, column=3, value=_limpiar_celda(ev.punto_control.nombre if ev.punto_control else "—"))
+        ws.cell(row=fila, column=4, value=_limpiar_celda(ev.guardia_nombre))
 
         # Coordenadas como hipervínculo a Google Maps (igual que "Ver mapa").
         celda_coord = ws.cell(row=fila, column=5)
@@ -132,7 +142,7 @@ def _exportar_excel(request, *, titulo, aplica_filtro, slug_base):
         ws.cell(row=fila, column=6,
                 value=float(ev.distancia_metros) if ev.distancia_metros is not None else "—")
         ws.cell(row=fila, column=7, value=_geocerca_texto(ev))
-        ws.cell(row=fila, column=8, value=ev.texto or "—")
+        ws.cell(row=fila, column=8, value=_limpiar_celda(ev.texto or "—"))
         fila += 1
 
     ws.freeze_panes = "A3"  # fija título + encabezado al hacer scroll
@@ -203,7 +213,7 @@ def exportar_novedades(request):
 
     # Título (fila 1) con instalación + rango.
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_cols)
-    celda_titulo = ws.cell(row=1, column=1, value=f"Informe de Novedades — {instalacion} — {etiqueta}")
+    celda_titulo = ws.cell(row=1, column=1, value=_limpiar_celda(f"Informe de Novedades — {instalacion} — {etiqueta}"))
     celda_titulo.font = Font(bold=True, size=13, color=ROJO_MARCA)
     celda_titulo.alignment = Alignment(horizontal="left", vertical="center")
 
@@ -234,9 +244,9 @@ def exportar_novedades(request):
     for ev in eventos:
         ws.cell(row=fila, column=1,
                 value=timezone.localtime(ev.timestamp_evento).strftime("%Y-%m-%d %H:%M:%S"))
-        ws.cell(row=fila, column=2, value=ev.texto or "—")
-        ws.cell(row=fila, column=3, value=ev.tipo_evento.nombre)
-        ws.cell(row=fila, column=4, value=ev.guardia_nombre)
+        ws.cell(row=fila, column=2, value=_limpiar_celda(ev.texto or "—"))
+        ws.cell(row=fila, column=3, value=_limpiar_celda(ev.tipo_evento.nombre))
+        ws.cell(row=fila, column=4, value=_limpiar_celda(ev.guardia_nombre))
 
         paths = fotos.get(ev.id, [])
         if paths:

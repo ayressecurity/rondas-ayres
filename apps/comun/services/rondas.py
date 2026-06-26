@@ -207,8 +207,16 @@ def iniciar_o_reusar_ejecucion(*, instalacion_id, guardia_keycloak_id, ahora):
     return ejecucion, ventana, estado
 
 
-def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng, texto, ahora):
+def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng, texto, ahora,
+                      timestamp_evento=None):
     """Registra un escaneo de QR en libro_novedades y devuelve el resultado (dict).
+
+    TIEMPOS (decisión QA #5):
+      - `ahora` = hora REAL del servidor (Santiago) al registrar -> timestamp_servidor.
+      - `timestamp_evento` (opcional) = hora de TERRENO (offline). Si no viene, se
+        usa `ahora`. La WEB no lo pasa -> ambos quedan ~now() (comportamiento igual
+        que antes). Solo la API con hora de terreno los diferencia. El bloqueo de
+        re-escaneo SIEMPRE filtra la ventana por timestamp_servidor (hora real).
 
     `instalacion_id` es la instalación de contexto (la del llamador). NOTA: para
     preservar EXACTAMENTE el comportamiento previo, el INSERT del arribo usa la
@@ -221,6 +229,8 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
         evento codigo_no_existe igual que antes). -> el adaptador responde 404.
       - "punto_otra_instalacion": el punto existe pero es de OTRA instalación; NO
         se registra nada ni se toca ronda_ejecucion. -> el adaptador da error claro.
+      - "sin_ronda_activa": no hay ninguna ronda activa cuyo horario contenga la
+        hora actual en esa instalación; NO se registra nada. -> error claro.
       - "catalogo_incompleto": falta el catálogo (corre seed_tipos_evento). -> 500.
       - "ya_escaneado": el guardia ya registró ese punto en esa ronda+ventana.
       - "ok": arribo registrado; incluye progreso y completada si hay ejecución.
@@ -235,6 +245,10 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
     ronda_id_evento = ejecucion.ronda_id if ejecucion else None
     ventana = _ventana_turno(ejecucion.ronda, ejecucion.iniciada_en) if ejecucion else None
 
+    # Tiempos: servidor = ahora (real); terreno = el de offline o ahora si no vino.
+    ts_servidor = ahora
+    ts_evento = timestamp_evento or ahora
+
     cp = PuntoControl.objects.filter(qr_token=qr_token, activo=True).first()
 
     with transaction.atomic():
@@ -246,8 +260,8 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
                     ronda_id=ronda_id_evento,
                     guardia_keycloak_id=guardia_keycloak_id,
                     tipo_evento=tipo_ne,
-                    timestamp_evento=ahora,
-                    timestamp_servidor=ahora,
+                    timestamp_evento=ts_evento,
+                    timestamp_servidor=ts_servidor,
                     lat=lat,
                     lng=lng,
                     estado="error",
@@ -261,6 +275,12 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
         # type-safe (la sesión guarda int; un futuro llamador podría dar str).
         if str(cp.instalacion_id) != str(instalacion_id):
             return {"resultado": "punto_otra_instalacion", "punto_nombre": cp.nombre}
+
+        # Debe existir una ronda ACTIVA cuyo horario contenga la hora actual en
+        # esta instalación. Si no, NO se registra nada (decisión QA #8): no se
+        # permite marcar fuera de ventana de ronda (evita duplicados sin turno).
+        if _ronda_para_ahora(cp.instalacion_id) is None:
+            return {"resultado": "sin_ronda_activa", "punto_nombre": cp.nombre}
 
         # Bloqueo de re-escaneo POR GUARDIA + TURNO: si ESTE guardia ya registró
         # ESTE punto, para ESTA ronda, DENTRO de la ventana del turno, no se
@@ -308,8 +328,8 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
             punto_control=cp,
             guardia_keycloak_id=guardia_keycloak_id,
             tipo_evento=tipo_evento,
-            timestamp_evento=ahora,
-            timestamp_servidor=ahora,
+            timestamp_evento=ts_evento,
+            timestamp_servidor=ts_servidor,
             lat=lat,
             lng=lng,
             distancia_metros=distancia_dec,

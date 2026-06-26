@@ -162,14 +162,14 @@ def _coord(valor):
         return None
 
 
-def _punto_por_qr(request, qr_token):
-    """PuntoControl activo del qr_token que pertenezca a la instalación en sesión."""
-    if not qr_token:
+def _punto_por_qr(qr_token, instalacion_id):
+    """PuntoControl activo del qr_token que pertenezca a esa instalación."""
+    if not qr_token or not instalacion_id:
         return None
     return PuntoControl.objects.filter(
         qr_token=qr_token,
         activo=True,
-        instalacion_id=request.session["instalacion_id"],
+        instalacion_id=instalacion_id,
     ).first()
 
 
@@ -188,7 +188,10 @@ def configurar_qr_buscar(request):
     """Valida el QR escaneado (de esta instalación) y devuelve su config actual."""
     if not permisos.es_super_admin(request):
         return JsonResponse({"ok": False, "error": "No autorizado."}, status=403)
-    cp = _punto_por_qr(request, (request.POST.get("qr_token") or "").strip())
+    instalacion_id = request.session.get("instalacion_id")
+    if not instalacion_id:
+        return JsonResponse({"ok": False, "error": "Selecciona una instalación primero."}, status=400)
+    cp = _punto_por_qr((request.POST.get("qr_token") or "").strip(), instalacion_id)
     if cp is None:
         return JsonResponse(
             {"ok": False, "error": "Este QR no pertenece a esta instalación."}, status=404
@@ -209,7 +212,11 @@ def configurar_qr_guardar(request):
     if not permisos.es_super_admin(request):
         return JsonResponse({"ok": False, "error": "No autorizado."}, status=403)
 
-    cp = _punto_por_qr(request, (request.POST.get("qr_token") or "").strip())
+    instalacion_id = request.session.get("instalacion_id")
+    if not instalacion_id:
+        return JsonResponse({"ok": False, "error": "Selecciona una instalación primero."}, status=400)
+
+    cp = _punto_por_qr((request.POST.get("qr_token") or "").strip(), instalacion_id)
     if cp is None:
         return JsonResponse(
             {"ok": False, "error": "Este QR no pertenece a esta instalación."}, status=404
@@ -222,6 +229,11 @@ def configurar_qr_guardar(request):
             {"ok": False, "error": "Falta la ubicación: debes permitir el GPS para configurar."},
             status=400,
         )
+    # Rango geográfico válido (evita coordenadas imposibles del GPS).
+    if not (-90 <= lat <= 90):
+        return JsonResponse({"ok": False, "error": "Latitud fuera de rango (-90 a 90)."}, status=400)
+    if not (-180 <= lng <= 180):
+        return JsonResponse({"ok": False, "error": "Longitud fuera de rango (-180 a 180)."}, status=400)
 
     # Tolerancia entera >= 0; si no viene válida, conserva la actual.
     try:

@@ -54,6 +54,15 @@ from apps.rondas.models import (
 
 log = logging.getLogger("apps.api")
 
+# Errores de zona horaria en el cambio de horario (DST). pytz puede no estar
+# instalado (Django 5 usa zoneinfo, que no lanza en DST): import defensivo para
+# no fallar y, si está, capturarlos y devolver 400 en vez de 500.
+try:  # pragma: no cover
+    from pytz.exceptions import AmbiguousTimeError, NonExistentTimeError
+    _ERRORES_DST = (AmbiguousTimeError, NonExistentTimeError)
+except ImportError:  # pragma: no cover
+    _ERRORES_DST = ()
+
 
 def _kc_norm(campo):
     """Expresión SQL que normaliza un keycloak_id (sin guiones, minúsculas).
@@ -153,12 +162,13 @@ def notificaciones_mias(request):
     return Response(NotificacionSerializer(notifs, many=True).data)
 
 
-def _primer_campo_invalido(errores):
-    """Nombre del primer campo con error (para un mensaje 400 claro)."""
-    try:
-        return next(iter(errores))
-    except StopIteration:
-        return "body"
+def _primer_error(errores):
+    """Primer mensaje de error legible del serializer (para un 400 claro)."""
+    for _campo, detalle in errores.items():
+        if isinstance(detalle, (list, tuple)) and detalle:
+            return str(detalle[0])
+        return str(detalle)
+    return "Solicitud inválida."
 
 
 def _evento_a_http(res):
@@ -201,6 +211,12 @@ def _evento_a_http(res):
         # se mapea por robustez.
         raise solicitud_invalida("Este QR no pertenece a esta instalación.", "punto_otra_instalacion")
 
+    if resultado == "sin_ronda_activa":
+        # No hay ronda activa en este horario: no se registró nada (decisión #8).
+        raise solicitud_invalida(
+            "Este QR no pertenece a una ronda activa en este horario.", "sin_ronda_activa"
+        )
+
     if resultado == "catalogo_incompleto":
         raise catalogo_no_disponible()
 
@@ -223,10 +239,7 @@ def crear_evento(request):
     # 1) Validar el body. La identidad y la instalación NO salen de aquí.
     ser = EventoCreateSerializer(data=request.data)
     if not ser.is_valid():
-        raise solicitud_invalida(
-            f"Falta o es inválido el campo: {_primer_campo_invalido(ser.errors)}.",
-            "body_invalido",
-        )
+        raise solicitud_invalida(_primer_error(ser.errors), "body_invalido")
     datos = ser.validated_data
 
     # 2) Identidad SIEMPRE del token (sub CON guiones que dejó el portero del A).
@@ -239,13 +252,18 @@ def crear_evento(request):
     lng = float(datos["lng"])
     texto = (datos.get("texto") or "").strip() or None
 
-    # 3) 'ahora': hora de TERRENO si vino (offline); si no, la del servidor
-    #    (Santiago vía timezone). El service escribe ambos timestamps con este
-    #    valor, igual que la web (que pasa timezone.now()).
-    ts = datos.get("timestamp_evento")
-    if ts is not None and timezone.is_naive(ts):
-        ts = timezone.make_aware(ts)
-    ahora = ts or timezone.now()
+    # 3) Hora de TERRENO (offline) si vino; se hace aware en Santiago. La hora del
+    #    SERVIDOR (ahora) se calcula aparte y es la que irá a timestamp_servidor.
+    ts_terreno = datos.get("timestamp_evento")
+    if ts_terreno is not None and timezone.is_naive(ts_terreno):
+        try:
+            ts_terreno = timezone.make_aware(ts_terreno)
+        except (*_ERRORES_DST, ValueError, OverflowError):
+            # Hora ambigua/inexistente por el cambio de horario (DST) u otra. No 500.
+            raise solicitud_invalida(
+                "La hora del evento (timestamp_evento) no es válida.", "timestamp_invalido"
+            )
+    ahora = timezone.now()  # hora REAL del servidor (Santiago vía timezone)
 
     # 4) Instalación DERIVADA del propio punto del QR (opción a, stateless). El
     #    service vuelve a resolver el punto; aquí lo resolvemos para derivar la
@@ -254,15 +272,15 @@ def crear_evento(request):
     if punto is not None:
         instalacion_id = punto.instalacion_id
         try:
-            # Asegura una ejecución en curso para la ronda de la hora (habilita el
-            # bloqueo de re-escaneo = idempotencia), igual que el flujo web.
+            # Si hay ronda activa, asegura/retoma la ejecución (habilita el bloqueo
+            # de re-escaneo). Si NO hay, el service rechaza con "sin_ronda_activa".
             iniciar_o_reusar_ejecucion(
                 instalacion_id=instalacion_id,
                 guardia_keycloak_id=guardia,
                 ahora=ahora,
             )
         except SinRondaActiva:
-            pass  # sin ronda en este horario: se registra como evento suelto
+            pass  # el service vuelve a comprobarlo y devuelve "sin_ronda_activa"
     else:
         instalacion_id = None  # codigo_no_existe: el service usa instalacion_id=0
 
@@ -275,6 +293,7 @@ def crear_evento(request):
         lng=lng,
         texto=texto,
         ahora=ahora,
+        timestamp_evento=ts_terreno,  # terreno (offline) o None -> el service usa ahora
     )
     return _evento_a_http(res)
 

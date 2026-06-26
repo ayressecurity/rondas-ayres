@@ -385,6 +385,45 @@ class EventosApiTests(_JwtMixin, TestCase):
         self.assertEqual(ev_web.guardia_keycloak_id, self.GUARDIA)
         self.assertEqual(ev_api.guardia_keycloak_id, otro)  # cada uno con SU sub, con guiones
 
+    # ---- marca fuera de ventana de ronda (decisión #8) ----
+    def test_sin_ronda_activa_no_registra(self):
+        # Punto de una instalación SIN ronda activa -> 400, sin escribir nada.
+        cp_sin = PuntoControl.objects.create(
+            instalacion_id=20, nombre="Sin Ronda", lat=str(self.LAT), lng=str(self.LNG),
+            tolerancia_mts=30, validar_posicion=True,
+            qr_token="20202020-2020-2020-2020-202020202020", activo=True,
+        )
+        antes = LibroNovedades.objects.count()
+        resp = self._post(self.URL, {"qr_token": cp_sin.qr_token, "lat": self.LAT, "lng": self.LNG}, sub=self.GUARDIA)
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["codigo"], "solicitud_invalida")
+        self.assertIn("ronda activa", resp.json()["error"]["mensaje"])
+        self.assertEqual(LibroNovedades.objects.count(), antes)
+
+    # ---- rango geográfico (decisión #2) ----
+    def test_lat_fuera_de_rango_400(self):
+        resp = self._post(self.URL, {"qr_token": self.cp.qr_token, "lat": 200, "lng": self.LNG}, sub=self.GUARDIA)
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("Latitud fuera de rango", resp.json()["error"]["mensaje"])
+
+    def test_lng_fuera_de_rango_400(self):
+        resp = self._post(self.URL, {"qr_token": self.cp.qr_token, "lat": self.LAT, "lng": 999}, sub=self.GUARDIA)
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("Longitud fuera de rango", resp.json()["error"]["mensaje"])
+
+    # ---- separación de timestamps en la API (decisión #5) ----
+    def test_timestamp_evento_de_terreno_distinto_de_servidor(self):
+        terreno = (dj_tz.now() - timedelta(hours=2)).isoformat()
+        resp = self._post(
+            self.URL,
+            {"qr_token": self.cp.qr_token, "lat": self.LAT, "lng": self.LNG, "timestamp_evento": terreno},
+            sub=self.GUARDIA,
+        )
+        self.assertEqual(resp.status_code, 201)
+        ev = LibroNovedades.objects.get(id=resp.json()["id"])
+        # timestamp_servidor = ahora del server; timestamp_evento = terreno (pasado).
+        self.assertGreater(ev.timestamp_servidor, ev.timestamp_evento)
+
 
 @override_settings(MEDIA_ROOT=_MEDIA_TMP)
 class MediaApiTests(_JwtMixin, TestCase):

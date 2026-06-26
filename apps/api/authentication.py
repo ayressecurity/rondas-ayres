@@ -16,11 +16,13 @@ import json
 import logging
 import threading
 import time
+from uuid import uuid4
 
 import jwt
 import requests
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError, transaction
 from django.db.models import CharField, Value
 from django.db.models.functions import Cast, Lower, Replace
 from jwt.algorithms import RSAAlgorithm
@@ -113,12 +115,16 @@ def resolver_usuario_jit(claims):
     # para igualar al objetivo ya normalizado.
     kc_texto = Cast("keycloak_id", output_field=CharField())
     kc_norm = Lower(Replace(kc_texto, Value("-"), Value(""), output_field=CharField()))
-    user = (
-        Usuario.objects
-        .annotate(kc_norm=kc_norm)
-        .filter(kc_norm=objetivo)
-        .first()
-    )
+
+    def _buscar():
+        return (
+            Usuario.objects
+            .annotate(kc_norm=kc_norm)
+            .filter(kc_norm=objetivo)
+            .first()
+        )
+
+    user = _buscar()
     if user is not None:
         return user, False
 
@@ -133,7 +139,19 @@ def resolver_usuario_jit(claims):
         is_superuser=False,
     )
     user.set_unusable_password()  # no hay login local: la auth es por token
-    user.save()
+    try:
+        with transaction.atomic():
+            user.save()
+    except IntegrityError:
+        # Colisión: o una carrera (otro request creó la misma fila por sub), o un
+        # 'preferred_username' ya tomado por OTRO sub. Nunca 500.
+        existente = _buscar()
+        if existente is not None:
+            return existente, False  # carrera: ya existe por sub
+        # username tomado por otro sub -> generar uno único y reintentar.
+        base = (claims.get("preferred_username") or sub)[:140]
+        user.username = f"{base}-{uuid4().hex[:8]}"
+        user.save()
     log.info("usuario_jit_creado sub=%s username=%s", sub, user.username)
     return user, True
 

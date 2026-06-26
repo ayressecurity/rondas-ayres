@@ -5,6 +5,7 @@ seleccionado, seleccion por fila (guarda en sesion) y cambio.
 Los datos vienen del repositorio del espejo (apps.espejo.repositorio): hoy
 simulados, manana reales, sin tocar esta vista.
 """
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect, render
 
@@ -26,7 +27,10 @@ def index(request):
 def seleccionar(request, instalacion_id):
     """Guarda la instalacion elegida en sesion y entra a su contexto."""
     ins = repositorio.obtener_instalacion(instalacion_id)
-    if not ins:
+    # Debe existir Y pertenecer al cliente seleccionado en sesión (aislamiento):
+    # si no, no se fija y se avisa (evita operar instalaciones de otro cliente).
+    if not ins or ins.cliente_id != request.session.get("cliente_id"):
+        messages.error(request, "Esa instalación no pertenece al cliente seleccionado.")
         return redirect("instalaciones:index")
     request.session["instalacion_id"] = ins.id
     request.session["instalacion_nombre"] = ins.nombre

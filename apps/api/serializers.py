@@ -62,10 +62,29 @@ class EventoCreateSerializer(serializers.Serializer):
     SOLO estos campos. La identidad (guardia) sale del TOKEN, NUNCA del body; la
     instalación se DERIVA del punto del qr_token. Si el body trae keycloak_id /
     guardia / sub / instalacion_id, se ignoran (no están declarados aquí)."""
-    qr_token = serializers.CharField(max_length=36)
+    qr_token = serializers.CharField(
+        max_length=36,
+        error_messages={"required": "Falta el qr_token.", "blank": "El qr_token no puede estar vacío."},
+    )
     # Misma precisión que PuntoControl/LibroNovedades. Se exigen numéricos.
-    lat = serializers.DecimalField(max_digits=20, decimal_places=17)
-    lng = serializers.DecimalField(max_digits=20, decimal_places=17)
+    lat = serializers.DecimalField(
+        max_digits=20, decimal_places=17,
+        error_messages={"required": "Falta la latitud (lat).", "invalid": "La latitud debe ser numérica."},
+    )
+    lng = serializers.DecimalField(
+        max_digits=20, decimal_places=17,
+        error_messages={"required": "Falta la longitud (lng).", "invalid": "La longitud debe ser numérica."},
+    )
     # Hora de TERRENO (offline). Opcional: si no viene, el servidor usa "ahora".
     timestamp_evento = serializers.DateTimeField(required=False, allow_null=True)
     texto = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    def validate_lat(self, value):
+        if not (-90 <= value <= 90):
+            raise serializers.ValidationError("Latitud fuera de rango (-90 a 90).")
+        return value
+
+    def validate_lng(self, value):
+        if not (-180 <= value <= 180):
+            raise serializers.ValidationError("Longitud fuera de rango (-180 a 180).")
+        return value

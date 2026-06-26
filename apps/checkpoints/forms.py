@@ -7,9 +7,13 @@ El checkbox se muestra como "No validar posición de arribo" = NOT validar_posic
 así que se expone como campo propio `no_validar` y la vista lo invierte.
 """
 from django import forms
+from django.conf import settings
 from django.core.validators import MinValueValidator
 
 from .models import PuntoControl
+
+# Foto de checkpoint: mismos formatos/criterio que la API y reportar_novedad.
+EXTENSIONES_FOTO = {"jpg", "jpeg", "png", "webp"}
 
 
 class PuntoControlForm(forms.ModelForm):
@@ -34,10 +38,12 @@ class PuntoControlForm(forms.ModelForm):
             "tolerancia_mts": "Tolerancia (mts)",
         }
         widgets = {
-            "nombre": forms.TextInput(attrs={"maxlength": 120}),
-            "observacion": forms.Textarea(attrs={"rows": 3}),
-            "lat": forms.NumberInput(attrs={"step": "any"}),
-            "lng": forms.NumberInput(attrs={"step": "any"}),
+            "nombre": forms.TextInput(attrs={
+                "maxlength": 120, "placeholder": "Ej. Portón principal"}),
+            "observacion": forms.Textarea(attrs={
+                "rows": 3, "placeholder": "Referencias del punto (opcional)…"}),
+            "lat": forms.NumberInput(attrs={"step": "any", "placeholder": "-33.40000"}),
+            "lng": forms.NumberInput(attrs={"step": "any", "placeholder": "-70.56000"}),
             "tolerancia_mts": forms.NumberInput(attrs={"min": 0, "step": 1}),
         }
 
@@ -63,3 +69,29 @@ class PuntoControlForm(forms.ModelForm):
         if not nombre:
             raise forms.ValidationError("El nombre es obligatorio.")
         return nombre
+
+    def clean_lat(self):
+        lat = self.cleaned_data.get("lat")
+        if lat is not None and not (-90 <= lat <= 90):
+            raise forms.ValidationError("Latitud fuera de rango (-90 a 90).")
+        return lat
+
+    def clean_lng(self):
+        lng = self.cleaned_data.get("lng")
+        if lng is not None and not (-180 <= lng <= 180):
+            raise forms.ValidationError("Longitud fuera de rango (-180 a 180).")
+        return lng
+
+    def clean_foto(self):
+        """Valida que la foto (si viene) sea imagen permitida y no exceda el máximo."""
+        foto = self.cleaned_data.get("foto")
+        if not foto:
+            return foto
+        nombre = foto.name or ""
+        ext = nombre.rsplit(".", 1)[-1].lower() if "." in nombre else ""
+        if ext not in EXTENSIONES_FOTO:
+            raise forms.ValidationError("Formato no permitido (usa JPG, PNG o WEBP).")
+        limite_mb = getattr(settings, "MEDIA_MAX_FOTO_MB", 10)
+        if foto.size > limite_mb * 1024 * 1024:
+            raise forms.ValidationError(f"La foto excede el máximo de {limite_mb} MB.")
+        return foto

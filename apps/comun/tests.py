@@ -5,7 +5,7 @@ Verifican el comportamiento que ANTES vivía en el escáner: decisión de
 tipo_evento, bloqueo de re-escaneo y reuso de la ejecución en curso. Además,
 el CONTRATO DE IDENTIDAD: el guardia_keycloak_id se escribe TAL CUAL (con guiones).
 """
-from datetime import date, time
+from datetime import date, time, timedelta
 
 from django.core.management import call_command
 from django.test import TestCase
@@ -36,6 +36,14 @@ class ServiceRondasTests(TestCase):
             tolerancia_mts=30, validar_posicion=True,
             qr_token="11111111-1111-1111-1111-111111111111", activo=True,
         )
+        # Ronda ACTIVA ahora (cubre todo el día) con el punto en su secuencia.
+        # Necesaria desde la decisión #8: sin ronda activa no se registra nada.
+        self.ronda = Ronda.objects.create(
+            cliente_id=1, instalacion_id=10, nombre="Ronda Día",
+            fecha_inicio=date(2026, 1, 1),
+            hora_inicio=time(0, 0, 0), hora_fin=time(23, 59, 59),
+        )
+        RondaSecuencia.objects.create(ronda=self.ronda, punto_control=self.cp, orden=1)
 
     def _ultimo_evento(self):
         return LibroNovedades.objects.order_by("-id").first()
@@ -107,6 +115,23 @@ class ServiceRondasTests(TestCase):
         # NO se escribió NADA en libro_novedades.
         self.assertEqual(LibroNovedades.objects.count(), antes)
 
+    # ---- sin ronda activa (decisión #8) ----
+    def test_sin_ronda_activa_no_registra(self):
+        # Punto de una instalación SIN ronda activa -> rechazo, sin escribir nada.
+        cp_sin = PuntoControl.objects.create(
+            instalacion_id=20, nombre="Sin Ronda", lat=str(LAT), lng=str(LNG),
+            tolerancia_mts=30, validar_posicion=True,
+            qr_token="20202020-2020-2020-2020-202020202020", activo=True,
+        )
+        antes = LibroNovedades.objects.count()
+        res = registrar_escaneo(
+            instalacion_id=20, guardia_keycloak_id=GUARDIA,
+            qr_token=cp_sin.qr_token, lat=LAT, lng=LNG, texto=None,
+            ahora=timezone.now(),
+        )
+        self.assertEqual(res["resultado"], "sin_ronda_activa")
+        self.assertEqual(LibroNovedades.objects.count(), antes)
+
     # ---- contrato de identidad ----
     def test_guardia_se_escribe_con_guiones_tal_cual(self):
         registrar_escaneo(
@@ -116,18 +141,31 @@ class ServiceRondasTests(TestCase):
         )
         self.assertEqual(self._ultimo_evento().guardia_keycloak_id, GUARDIA)
 
-    # ---- iniciar: reuso de ejecución ----
-    def _ronda_activa_ahora(self):
-        ronda = Ronda.objects.create(
-            cliente_id=1, instalacion_id=10, nombre="Ronda Día",
-            fecha_inicio=date(2026, 1, 1),
-            hora_inicio=time(0, 0, 0), hora_fin=time(23, 59, 59),
+    # ---- separación de timestamps (decisión #5) ----
+    def test_timestamp_servidor_real_y_evento_de_terreno(self):
+        ahora = timezone.now()
+        terreno = ahora - timedelta(hours=3)  # marca offline de hace 3 horas
+        registrar_escaneo(
+            instalacion_id=10, guardia_keycloak_id=GUARDIA,
+            qr_token=self.cp.qr_token, lat=LAT, lng=LNG, texto=None,
+            ahora=ahora, timestamp_evento=terreno,
         )
-        RondaSecuencia.objects.create(ronda=ronda, punto_control=self.cp, orden=1)
-        return ronda
+        ev = self._ultimo_evento()
+        self.assertEqual(ev.timestamp_evento, terreno)        # terreno tal cual
+        self.assertEqual(ev.timestamp_servidor, ahora)        # hora real del server
 
+    def test_web_sin_timestamp_evento_ambos_iguales(self):
+        # La web no pasa timestamp_evento -> ambos = ahora (sin cambio de conducta).
+        ahora = timezone.now()
+        registrar_escaneo(
+            instalacion_id=10, guardia_keycloak_id=GUARDIA,
+            qr_token=self.cp.qr_token, lat=LAT, lng=LNG, texto=None, ahora=ahora,
+        )
+        ev = self._ultimo_evento()
+        self.assertEqual(ev.timestamp_evento, ev.timestamp_servidor)
+
+    # ---- iniciar: reuso de ejecución ----
     def test_iniciar_reusa_la_ejecucion_en_curso(self):
-        self._ronda_activa_ahora()
         ej1, _v1, _e1 = iniciar_o_reusar_ejecucion(
             instalacion_id=10, guardia_keycloak_id=GUARDIA, ahora=timezone.now(),
         )
@@ -139,7 +177,6 @@ class ServiceRondasTests(TestCase):
 
     # ---- bloqueo de re-escaneo ----
     def test_bloqueo_no_duplica_mismo_punto_en_la_ventana(self):
-        ronda = self._ronda_activa_ahora()
         # Segundo punto para que la ronda NO se complete tras 1 escaneo
         # (si se completara, la ejecución dejaría de estar "en curso").
         cp2 = PuntoControl.objects.create(
@@ -147,7 +184,7 @@ class ServiceRondasTests(TestCase):
             tolerancia_mts=30, validar_posicion=True,
             qr_token="22222222-2222-2222-2222-222222222222", activo=True,
         )
-        RondaSecuencia.objects.create(ronda=ronda, punto_control=cp2, orden=2)
+        RondaSecuencia.objects.create(ronda=self.ronda, punto_control=cp2, orden=2)
 
         iniciar_o_reusar_ejecucion(
             instalacion_id=10, guardia_keycloak_id=GUARDIA, ahora=timezone.now(),
