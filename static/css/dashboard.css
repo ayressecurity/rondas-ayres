@@ -741,8 +741,10 @@ button.accion-imagen {
 }
 
 /* Ícono de mapa en la acción de la tabla: alinea con el texto del enlace. */
-.accion-mapa { display: inline-flex; align-items: center; gap: 4px; }
-.icono-mapa { vertical-align: middle; }
+/* "Ver mapa" en el MISMO flujo inline que los demás enlaces de acción (no
+   inline-flex: su baseline desalineaba el texto). El ícono se centra con el texto. */
+.accion-mapa { display: inline; }
+.icono-mapa { vertical-align: middle; margin-right: 4px; }
 
 /* ---------- Escáner de prueba (QR) ---------- */
 .escaner-wrap { max-width: 480px; }
