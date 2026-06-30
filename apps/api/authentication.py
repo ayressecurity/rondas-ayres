@@ -33,6 +33,8 @@ from rest_framework.exceptions import AuthenticationFailed
 from apps.cuentas.auth_backend import _roles_de_claims
 from apps.cuentas.identidad import norm_keycloak_id
 from apps.api.exceptions import DependenciaNoDisponible
+from apps.dispositivos.models import Dispositivo
+from apps.dispositivos.utils import hash_token
 
 log = logging.getLogger("apps.api")
 
@@ -239,4 +241,43 @@ class KeycloakJWTAuthentication(BaseAuthentication):
 
     def authenticate_header(self, request):
         # Presencia de este header hace que DRF responda 401 (no 403) sin auth.
+        return 'Bearer realm="api"'
+
+
+class DeviceTokenAuthentication(BaseAuthentication):
+    """Identidad del DISPOSITIVO (header `X-Device-Token`), como EFECTO COLATERAL.
+
+    NO autentica al usuario: eso es trabajo del portero Keycloak. Su única misión
+    es dejar `request.dispositivo` disponible para las vistas que lo necesiten
+    (marcas, rondas). Por eso SIEMPRE devuelve None.
+
+    ORDEN (importante): debe ir ANTES que KeycloakJWTAuthentication en
+    @authentication_classes. DRF recorre los authenticators y se detiene en el
+    PRIMERO que devuelve una tupla (user, auth); como este SIEMPRE devuelve None,
+    deja correr al portero Keycloak, que autentica al guardia con normalidad.
+
+    El device_token es OPCIONAL: header ausente, token inválido o dispositivo
+    revocado -> request.dispositivo = None (NO se lanza 401; un header malo se
+    ignora, no rompe la request del guardia).
+    """
+
+    def authenticate(self, request):
+        # Lo dejamos en el HttpRequest subyacente (igual patrón que el portero),
+        # para que la vista lo lea como request.dispositivo y el middleware lo vea.
+        base = getattr(request, "_request", request)
+        token = (request.META.get("HTTP_X_DEVICE_TOKEN") or "").strip()
+        if not token:
+            base.dispositivo = None
+            return None
+
+        disp = Dispositivo.objects.filter(token_hash=hash_token(token), activo=True).first()
+        base.dispositivo = disp           # None si el token no casa o está revocado
+        if disp is not None:
+            disp.touch()                  # refresca presencia (throttle de 5 min)
+        return None                       # SIEMPRE None -> corre el portero Keycloak
+
+    def authenticate_header(self, request):
+        # DRF usa el header del PRIMER authenticator para decidir 401 vs 403. Como
+        # este va primero y la auth real es el Bearer de Keycloak, devolvemos el
+        # mismo esquema para conservar el 401 (no 403) cuando falta el token del guardia.
         return 'Bearer realm="api"'

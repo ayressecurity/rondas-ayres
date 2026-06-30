@@ -25,6 +25,8 @@ from django.utils import timezone as dj_tz
 from rest_framework.test import APIClient
 
 from apps.checkpoints.models import PuntoControl
+from apps.dispositivos.models import Dispositivo
+from apps.dispositivos.utils import hash_token
 from apps.novedades.models import (
     CategoriaEvento,
     LibroNovedades,
@@ -222,6 +224,30 @@ class LecturasApiTests(_JwtMixin, TestCase):
 
     def test_rondas_sin_token_401(self):
         self.assertEqual(self.client.get("/api/rondas?mias").status_code, 401)
+
+    # ---- rondas?mias con DISPOSITIVO (Fase 4) ----
+    def _device_token(self, instalacion_id=10, token="dev-rondas", activo=True):
+        Dispositivo.objects.create(
+            instalacion_id=instalacion_id, token_hash=hash_token(token), activo=activo,
+        )
+        return token
+
+    def test_rondas_con_device_devuelve_rondas_de_la_instalacion(self):
+        # Con X-Device-Token: TODAS las rondas activas de la instalación del
+        # dispositivo (10 -> A y B), no solo las "asignadas" al guardia.
+        token = self._device_token(instalacion_id=10)
+        resp = self.client.get(
+            "/api/rondas?mias",
+            HTTP_AUTHORIZATION=f"Bearer {self._token(_claims(sub=self.SUB_A))}",
+            HTTP_X_DEVICE_TOKEN=token,
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(sorted(r["nombre"] for r in resp.json()), ["Ronda A", "Ronda B"])
+
+    def test_rondas_sin_device_mantiene_fallback_por_guardia(self):
+        # Sin device: comportamiento de SIEMPRE (solo la ronda del guardia A).
+        data = self._get("/api/rondas?mias", sub=self.SUB_A).json()
+        self.assertEqual([r["nombre"] for r in data], ["Ronda A"])
 
     # ---- notificaciones?mias ----
     def test_notificaciones_mias_solo_suyas(self):
@@ -487,6 +513,57 @@ class EventosApiTests(_JwtMixin, TestCase):
         self.assertEqual(
             LibroNovedades.objects.filter(punto_control=self.cp, tipo_evento__codigo="arribo").count(), 2
         )
+
+    # ---- Fase 4: identidad del DISPOSITIVO (header X-Device-Token) ----
+    def _device_token(self, instalacion_id=10, token="device-1", activo=True):
+        Dispositivo.objects.create(
+            instalacion_id=instalacion_id, token_hash=hash_token(token), activo=activo,
+        )
+        return token
+
+    def _post_device(self, body, token, sub=None):
+        return self.client.post(
+            self.URL, body, format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self._token(_claims(sub=sub or self.GUARDIA))}",
+            HTTP_X_DEVICE_TOKEN=token,
+        )
+
+    def test_marca_con_device_valido_sella_dispositivo_id(self):
+        token = self._device_token(instalacion_id=10)  # misma instalación que el QR
+        disp = Dispositivo.objects.get(token_hash=hash_token(token))
+        resp = self._post_device(self._body(), token)
+        self.assertEqual(resp.status_code, 201)
+        ev = LibroNovedades.objects.get(id=resp.json()["id"])
+        self.assertEqual(ev.dispositivo_id, disp.id)   # sellado por el authenticator
+        disp.refresh_from_db()
+        self.assertIsNotNone(disp.last_seen)           # touch() registró presencia
+
+    def test_marca_device_de_otra_instalacion_400(self):
+        token = self._device_token(instalacion_id=11)  # el QR es de la instalación 10
+        antes = LibroNovedades.objects.count()
+        resp = self._post_device(self._body(), token)
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["codigo"], "solicitud_invalida")
+        self.assertIn("no está enrolado", resp.json()["error"]["mensaje"])
+        self.assertEqual(LibroNovedades.objects.count(), antes)  # doble candado: no registra
+
+    def test_marca_sin_device_dispositivo_id_null(self):
+        # Como hoy: sin X-Device-Token, dispositivo_id queda NULL.
+        resp = self._post(self.URL, self._body(), sub=self.GUARDIA)
+        self.assertEqual(resp.status_code, 201)
+        self.assertIsNone(LibroNovedades.objects.get(id=resp.json()["id"]).dispositivo_id)
+
+    def test_device_token_invalido_se_ignora_sin_401(self):
+        # Token que no casa con ningún dispositivo: NO 401; se trata como sin device.
+        resp = self._post_device(self._body(), "token-inexistente")
+        self.assertEqual(resp.status_code, 201)
+        self.assertIsNone(LibroNovedades.objects.get(id=resp.json()["id"]).dispositivo_id)
+
+    def test_device_revocado_se_ignora(self):
+        token = self._device_token(instalacion_id=10, activo=False)  # revocado
+        resp = self._post_device(self._body(), token)
+        self.assertEqual(resp.status_code, 201)
+        self.assertIsNone(LibroNovedades.objects.get(id=resp.json()["id"]).dispositivo_id)
 
 
 @override_settings(MEDIA_ROOT=_MEDIA_TMP)

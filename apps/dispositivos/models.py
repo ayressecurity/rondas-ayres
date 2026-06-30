@@ -10,7 +10,14 @@ Referencia a instalacion por id LÓGICO, SIN ForeignKey (regla del proyecto: nad
 apunta al espejo de Ayres con FK). El token del dispositivo NUNCA se guarda en
 claro: solo su hash SHA-256.
 """
+from datetime import timedelta
+
 from django.db import models
+from django.utils import timezone
+
+# Throttle de last_seen: no escribimos en cada request (libro_novedades/marcas son
+# de alto volumen); basta con refrescar la presencia cada 5 minutos.
+TOUCH_THROTTLE = timedelta(minutes=5)
 
 
 class Dispositivo(models.Model):
@@ -32,3 +39,13 @@ class Dispositivo(models.Model):
 
     def __str__(self):
         return self.nombre or f"Dispositivo {self.pk}"
+
+    def touch(self):
+        """Refresca last_seen (presencia del dispositivo) con throttle de 5 min.
+
+        Lo llama el authenticator en cada request del dispositivo; el throttle
+        evita un UPDATE por petición. Hora del servidor (America/Santiago)."""
+        ahora = timezone.now()
+        if self.last_seen is None or (ahora - self.last_seen) > TOUCH_THROTTLE:
+            self.last_seen = ahora
+            self.save(update_fields=["last_seen"])

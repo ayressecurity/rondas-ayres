@@ -275,7 +275,7 @@ def iniciar_o_reusar_ejecucion(*, instalacion_id, guardia_keycloak_id, ahora):
 
 
 def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng, texto, ahora,
-                      timestamp_evento=None):
+                      timestamp_evento=None, dispositivo_id=None):
     """Registra un escaneo de QR en libro_novedades y devuelve el resultado (dict).
 
     TIEMPOS (decisión QA #5):
@@ -290,6 +290,10 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
     instalación del PROPIO punto (cp.instalacion_id) y el de "código no existe"
     usa 0 (punto desconocido); por eso este parámetro queda reservado para
     futuros llamadores (API) y no altera lo que escribe el escáner web.
+
+    `dispositivo_id` (opcional) = id del Dispositivo enrolado que envió la marca
+    (Fase 4). Solo lo pasa la API cuando llega un X-Device-Token válido; el escáner
+    web NO lo pasa -> queda None -> el INSERT escribe NULL, idéntico a hoy.
 
     El dict siempre trae "resultado" como discriminador para el adaptador:
       - "codigo_no_existe": el QR no calza con ningún punto activo (se registró el
@@ -323,6 +327,7 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
                     instalacion_id=0,  # desconocido (no hay punto); sin FK
                     ronda_id=ronda_ne.id if ronda_ne else None,
                     guardia_keycloak_id=guardia_keycloak_id,
+                    dispositivo_id=dispositivo_id,  # None (web) -> NULL, igual que hoy
                     tipo_evento=tipo_ne,
                     timestamp_evento=ts_evento,
                     timestamp_servidor=ts_servidor,
@@ -400,6 +405,7 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
             ronda_id=ronda_actual.id,              # ronda del momento (blindaje)
             punto_control=cp,
             guardia_keycloak_id=guardia_keycloak_id,
+            dispositivo_id=dispositivo_id,         # None (web) -> NULL, igual que hoy
             tipo_evento=tipo_evento,
             timestamp_evento=ts_evento,
             timestamp_servidor=ts_servidor,

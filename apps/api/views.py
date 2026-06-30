@@ -35,6 +35,7 @@ from apps.api.exceptions import (
     no_encontrado,
     solicitud_invalida,
 )
+from apps.api.authentication import DeviceTokenAuthentication, KeycloakJWTAuthentication
 from apps.api.throttling import EnrollThrottle
 from apps.dispositivos.models import Dispositivo
 from apps.dispositivos.utils import generar_token, hash_token
@@ -129,20 +130,40 @@ def checkpoint_by_qr(request, qr_token):
     return Response(PuntoControlByQrSerializer(cp).data)
 
 
-@api_view(["GET"])
-def rondas_mias(request):
-    """GET /api/rondas?mias — rondas asignadas al guardia del token.
+def _secuencia_prefetch():
+    """Prefetch de la secuencia ordenada por 'orden' (un golpe, sin N+1)."""
+    return Prefetch("rondasecuencia_set", queryset=RondaSecuencia.objects.order_by("orden"))
 
-    SOLO las del guardia (vía RondaGuardia); jamás las de otro. Cada ronda trae
-    su secuencia de puntos (punto_control_id + orden) para armar la ruta."""
+
+@api_view(["GET"])
+@authentication_classes([DeviceTokenAuthentication, KeycloakJWTAuthentication])
+def rondas_mias(request):
+    """GET /api/rondas?mias — rondas para la app del guardia.
+
+    Dos modos (el device_token manda):
+      - CON X-Device-Token válido (app móvil): devuelve las rondas ACTIVAS de la
+        INSTALACIÓN del dispositivo (la asignación por guardia no se usa). La
+        instalación sale del dispositivo, nunca del body.
+      - SIN device (clientes JWT actuales / Postman): comportamiento de SIEMPRE,
+        las rondas asignadas al guardia vía RondaGuardia (fallback intacto).
+
+    Cada ronda trae su secuencia de puntos (punto_control_id + orden) para la ruta."""
+    dispositivo = getattr(request, "dispositivo", None)
+    if dispositivo is not None:
+        rondas = (
+            Ronda.objects
+            .filter(instalacion_id=dispositivo.instalacion_id, estado=EstadoGenerico.ACTIVA)
+            .prefetch_related(_secuencia_prefetch())
+            .order_by("nombre")
+        )
+        return Response(RondaSerializer(rondas, many=True).data)
+
+    # Fallback sin device: SOLO las del guardia (vía RondaGuardia), como hoy.
     ids = _ids_rondas_del_guardia(request.sub_con_guiones)
     rondas = (
         Ronda.objects
         .filter(id__in=ids)
-        # La secuencia se trae ordenada por 'orden' en un solo golpe (sin N+1).
-        .prefetch_related(
-            Prefetch("rondasecuencia_set", queryset=RondaSecuencia.objects.order_by("orden"))
-        )
+        .prefetch_related(_secuencia_prefetch())
         .order_by("nombre")
     )
     return Response(RondaSerializer(rondas, many=True).data)
@@ -245,12 +266,17 @@ def _evento_a_http(res):
 
 
 @api_view(["POST"])
+@authentication_classes([DeviceTokenAuthentication, KeycloakJWTAuthentication])
 def crear_evento(request):
     """POST /api/eventos — registra una marca del guardia desde la app móvil.
 
     Adaptador DELGADO: valida el body, deriva la instalación del QR, y llama al
     MISMO service que el escáner web (iniciar_o_reusar_ejecucion + registrar_escaneo).
     Toda la lógica de negocio vive en el service; aquí solo se parsea y se traduce.
+
+    Dos identidades (Fase 4): el GUARDIA sale del token (sub) y el DISPOSITIVO del
+    header X-Device-Token (opcional). Si viene un dispositivo válido se aplica el
+    DOBLE CANDADO de instalación y se sella libro_novedades.dispositivo_id.
     """
     # 1) Validar el body. La identidad y la instalación NO salen de aquí.
     ser = EventoCreateSerializer(data=request.data)
@@ -284,8 +310,19 @@ def crear_evento(request):
     # 4) Instalación DERIVADA del propio punto del QR (opción a, stateless). El
     #    service vuelve a resolver el punto; aquí lo resolvemos para derivar la
     #    instalación y para iniciar/reusar la ejecución de la ronda de la hora.
+    dispositivo = getattr(request, "dispositivo", None)  # del X-Device-Token (o None)
+
     punto = PuntoControl.objects.filter(qr_token=qr_token, activo=True).first()
     if punto is not None:
+        # DOBLE CANDADO (en la vista, no en el service): si vino un dispositivo,
+        # debe estar enrolado en la MISMA instalación del punto escaneado. Es un
+        # candado NUEVO y distinto de "punto_otra_instalacion" (ese compara el
+        # contexto del llamador vs el punto; este compara el dispositivo vs el punto).
+        if dispositivo is not None and dispositivo.instalacion_id != punto.instalacion_id:
+            raise solicitud_invalida(
+                "Este teléfono no está enrolado en la instalación de este punto.",
+                "dispositivo_otra_instalacion",
+            )
         instalacion_id = punto.instalacion_id
         try:
             # Si hay ronda activa, asegura/retoma la ejecución (habilita el bloqueo
@@ -310,6 +347,7 @@ def crear_evento(request):
         texto=texto,
         ahora=ahora,
         timestamp_evento=ts_terreno,  # terreno (offline) o None -> el service usa ahora
+        dispositivo_id=dispositivo.id if dispositivo is not None else None,
     )
     return _evento_a_http(res)
 

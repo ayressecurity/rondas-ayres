@@ -10,6 +10,7 @@ NO dependemos de Keycloak real: el acceso web se simula poniendo un access token
 (sin firmar; permisos lo lee con verify_signature=False) en la sesión.
 """
 import hashlib
+from datetime import timedelta
 from uuid import UUID
 
 import jwt
@@ -17,6 +18,7 @@ from django.core.cache import cache
 from django.contrib.auth import get_user_model
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.dispositivos.models import Dispositivo
@@ -43,6 +45,39 @@ class GuardiaSyncTests(TestCase):
         # pisaría con None en cada sincronización. Este test lo impide.
         self.assertNotIn("qr", INSTALACION_FIELDS)
         self.assertNotIn("codigo", INSTALACION_FIELDS)
+
+
+# ---------------------------------------------------------------------------
+# touch(): presencia del dispositivo con throttle de 5 min (Fase 4)
+# ---------------------------------------------------------------------------
+class TouchTests(TestCase):
+    def _dispositivo(self, sufijo):
+        return Dispositivo.objects.create(instalacion_id=10, token_hash=sufijo * 64)
+
+    def test_touch_setea_si_nunca_visto(self):
+        d = self._dispositivo("a")
+        self.assertIsNone(d.last_seen)
+        d.touch()
+        d.refresh_from_db()
+        self.assertIsNotNone(d.last_seen)
+
+    def test_touch_respeta_throttle_de_5_min(self):
+        d = self._dispositivo("b")
+        reciente = timezone.now() - timedelta(minutes=2)  # dentro de la ventana
+        Dispositivo.objects.filter(id=d.id).update(last_seen=reciente)
+        d.refresh_from_db()
+        d.touch()                       # NO debe reescribir
+        d.refresh_from_db()
+        self.assertEqual(d.last_seen, reciente)
+
+    def test_touch_actualiza_si_pasaron_mas_de_5_min(self):
+        d = self._dispositivo("c")
+        viejo = timezone.now() - timedelta(minutes=10)
+        Dispositivo.objects.filter(id=d.id).update(last_seen=viejo)
+        d.refresh_from_db()
+        d.touch()                       # fuera de la ventana -> actualiza
+        d.refresh_from_db()
+        self.assertGreater(d.last_seen, viejo)
 
 
 # ---------------------------------------------------------------------------
