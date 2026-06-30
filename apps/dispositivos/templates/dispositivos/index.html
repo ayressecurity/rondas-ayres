@@ -10,41 +10,24 @@
     </div>
 </div>
 
-{# ---- QR de enrolamiento de la instalación ---- #}
-<section class="form-tarjeta" style="margin-bottom:1.5rem;">
-    <h2 style="margin-top:0;">QR de enrolamiento</h2>
-
-    {% if tiene_qr %}
-        <p>Pega este QR en el puesto. El guardia lo escanea desde la app para enrolar su teléfono y amarrarlo a esta instalación.</p>
-        <div style="display:flex;flex-wrap:wrap;gap:1.5rem;align-items:flex-start;">
-            <img src="{% url 'dispositivos:qr_imagen' %}" alt="QR de enrolamiento"
-                 style="max-width:240px;width:100%;height:auto;border:1px solid #ddd;padding:8px;background:#fff;">
-            <div style="display:flex;flex-direction:column;gap:.6rem;min-width:200px;">
-                <a class="btn btn-secundario" href="{% url 'dispositivos:imprimir' %}" target="_blank" rel="noopener">Imprimir</a>
-                <a class="btn btn-secundario" href="{% url 'dispositivos:qr_imagen' %}?descargar=1">Descargar PNG</a>
-                <form method="post" action="{% url 'dispositivos:rotar' %}"
-                      onsubmit="return confirm('¿Rotar el QR? El cartel anterior dejará de servir para NUEVOS enrolamientos. Los dispositivos ya enrolados seguirán activos.');">
-                    {% csrf_token %}
-                    <button type="submit" class="btn btn-primario" style="width:100%;">Rotar QR</button>
-                </form>
-                <p style="font-size:.85rem;color:#666;margin:0;">
-                    Rotar cambia el secreto e invalida el cartel viejo solo para
-                    <strong>nuevos</strong> enrolamientos. No revoca los dispositivos ya enrolados.
-                </p>
-            </div>
-        </div>
-    {% else %}
-        <p>Esta instalación todavía no tiene un QR de enrolamiento. Genéralo para empezar a enrolar teléfonos.</p>
-        <form method="post" action="{% url 'dispositivos:generar' %}">
-            {% csrf_token %}
-            <button type="submit" class="btn btn-primario">Generar QR de enrolamiento</button>
-        </form>
-    {% endif %}
-</section>
-
-{# ---- Dispositivos enrolados ---- #}
+{# Franja de acción + tabla (la tabla es la protagonista, visible sin scroll).
+   El QR de enrolamiento vive en un MODAL on-brand (mismo patrón que Puntos de
+   control), para no robarle espacio a la lista. #}
 <div class="modulo-cabecera">
     <div><h2 style="margin:0;">Dispositivos enrolados</h2></div>
+    <div class="cabecera-acciones">
+        {% if tiene_qr %}
+            {# Sin JS abre el PNG en pestaña nueva; con JS, lo muestra en el modal. #}
+            <a href="{% url 'dispositivos:qr_imagen' %}" class="btn btn-primario accion-qr"
+               data-qr-url="{% url 'dispositivos:qr_imagen' %}" data-qr-nombre="{{ instalacion.nombre }}"
+               target="_blank" rel="noopener">Ver QR de enrolamiento</a>
+        {% else %}
+            <form method="post" action="{% url 'dispositivos:generar' %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-primario">Generar QR de enrolamiento</button>
+            </form>
+        {% endif %}
+    </div>
 </div>
 
 {% if page_obj.object_list %}
@@ -90,6 +73,37 @@
 {% else %}
 <div class="estado-vacio">
     <p>Aún no hay dispositivos enrolados en esta instalación.</p>
+</div>
+{% endif %}
+
+{% if tiene_qr %}
+{# Modal del QR de enrolamiento (se abre desde "Ver QR de enrolamiento").
+   Reutiliza el modal de QR y su JS (data-qr-url / data-qr-cerrar) del proyecto. #}
+<div class="qr-modal" id="qrModal" hidden>
+    <div class="qr-modal-overlay" data-qr-cerrar></div>
+    <div class="qr-modal-caja" role="dialog" aria-modal="true" aria-labelledby="qrModalTitulo">
+        <div class="qr-modal-cabecera">
+            <h2 id="qrModalTitulo">QR de enrolamiento</h2>
+            <button type="button" class="qr-modal-cerrar" data-qr-cerrar aria-label="Cerrar">×</button>
+        </div>
+        <p class="qr-modal-sub" id="qrModalNombre"></p>
+        <div class="qr-modal-img">
+            <img id="qrModalImg" src="" alt="QR de enrolamiento">
+        </div>
+        <p class="qr-modal-sub" style="margin-bottom:14px;">
+            Rotar cambia el secreto e invalida el cartel viejo solo para
+            <strong>nuevos</strong> enrolamientos. No revoca los dispositivos ya enrolados.
+        </p>
+        <div class="form-acciones">
+            <a class="btn btn-secundario" href="{% url 'dispositivos:imprimir' %}" target="_blank" rel="noopener">Imprimir</a>
+            <a class="btn btn-secundario" id="qrModalDescargar" href="#">Descargar PNG</a>
+            <form method="post" action="{% url 'dispositivos:rotar' %}"
+                  onsubmit="return confirm('¿Rotar el QR? El cartel anterior dejará de servir para NUEVOS enrolamientos. Los dispositivos ya enrolados seguirán activos.');">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-primario">Rotar QR</button>
+            </form>
+        </div>
+    </div>
 </div>
 {% endif %}
 {% endblock %}
