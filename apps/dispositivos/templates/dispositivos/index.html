@@ -10,9 +10,7 @@
     </div>
 </div>
 
-{# Franja de acción + tabla (la tabla es la protagonista, visible sin scroll).
-   El QR de enrolamiento vive en un MODAL on-brand (mismo patrón que Puntos de
-   control), para no robarle espacio a la lista. #}
+{# Franja de acción + tabla; el QR de enrolamiento vive en un modal on-brand. #}
 <div class="modulo-cabecera">
     <div><h2 style="margin:0;">Dispositivos enrolados</h2></div>
     <div class="cabecera-acciones">
@@ -77,8 +75,7 @@
 {% endif %}
 
 {% if tiene_qr %}
-{# Modal del QR de enrolamiento (se abre desde "Ver QR de enrolamiento").
-   Reutiliza el modal de QR y su JS (data-qr-url / data-qr-cerrar) del proyecto. #}
+{# Modal del QR de enrolamiento; reutiliza el modal de QR y su JS del proyecto. #}
 <div class="qr-modal" id="qrModal" hidden>
     <div class="qr-modal-overlay" data-qr-cerrar></div>
     <div class="qr-modal-caja" role="dialog" aria-modal="true" aria-labelledby="qrModalTitulo">
