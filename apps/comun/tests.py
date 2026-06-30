@@ -5,7 +5,7 @@ Verifican el comportamiento que ANTES vivía en el escáner: decisión de
 tipo_evento, bloqueo de re-escaneo y reuso de la ejecución en curso. Además,
 el CONTRATO DE IDENTIDAD: el guardia_keycloak_id se escribe TAL CUAL (con guiones).
 """
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta
 
 from django.core.management import call_command
 from django.test import TestCase
@@ -13,12 +13,14 @@ from django.utils import timezone
 
 from apps.checkpoints.models import PuntoControl
 from apps.comun.services.rondas import (
+    SIN_VENTANA,
+    _ventana_alarma,
     iniciar_o_reusar_ejecucion,
     registrar_escaneo,
 )
 from apps.escaner.models import RondaEjecucion
 from apps.novedades.models import LibroNovedades
-from apps.rondas.models import Ronda, RondaSecuencia
+from apps.rondas.models import Programacion, ProgramacionHorario, Ronda, RondaSecuencia
 
 # Guardia de prueba: sub CON guiones (como llega del token / del UUID del user).
 GUARDIA = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -276,3 +278,141 @@ class ServiceRondasTests(TestCase):
             punto_control=self.cp, tipo_evento__codigo="arribo",
         ).count()
         self.assertEqual(arribos, 1)
+
+
+class VentanaAlarmaTests(TestCase):
+    """Ventanas de marcaje por alarma (programacion_horario). El bloqueo pasa a
+    ser por guardia + ronda + punto + ventana-de-alarma; al entrar la siguiente
+    alarma, los QR se reinician. Fallback a turno si no hay alarmas."""
+
+    GUARDIA_B = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+
+    def setUp(self):
+        call_command("seed_tipos_evento")
+        # Ronda de DÍA COMPLETO (00:00–23:59:59) para que _ronda_para_ahora (que
+        # usa la hora REAL del servidor) siempre la encuentre; las VENTANAS las
+        # controlamos pasando `ahora` explícito a registrar_escaneo.
+        self.ronda = Ronda.objects.create(
+            cliente_id=1, instalacion_id=10, nombre="Ronda Día",
+            fecha_inicio=date(2026, 1, 1),
+            hora_inicio=time(0, 0, 0), hora_fin=time(23, 59, 59),
+        )
+        self.cp = PuntoControl.objects.create(
+            instalacion_id=10, nombre="P1", lat=str(LAT), lng=str(LNG),
+            tolerancia_mts=30, validar_posicion=True,
+            qr_token="cccccccc-cccc-cccc-cccc-cccccccccccc", activo=True,
+        )
+        RondaSecuencia.objects.create(ronda=self.ronda, punto_control=self.cp, orden=1)
+        # Alarmas 12:00 / 14:00 / 16:00 -> ventanas 12:00–13:59:59, 14:00–15:59:59, 16:00–fin.
+        prog = Programacion.objects.create(ronda=self.ronda, repite="todos_los_dias", activo=True)
+        for i, (h, m) in enumerate([(12, 0), (14, 0), (16, 0)], start=1):
+            ProgramacionHorario.objects.create(programacion=prog, hora=h, minuto=m, orden=i)
+        self.hoy = timezone.localtime(timezone.now()).date()
+
+    def _ahora(self, hh, mm, ss=0):
+        return timezone.make_aware(datetime.combine(self.hoy, time(hh, mm, ss)))
+
+    def _marcar(self, ahora, guardia=GUARDIA, cp=None):
+        return registrar_escaneo(
+            instalacion_id=10, guardia_keycloak_id=guardia,
+            qr_token=(cp or self.cp).qr_token, lat=LAT, lng=LNG, texto=None, ahora=ahora,
+        )
+
+    # ---- derivación de la ventana ----
+    def test_ventana_alarma_subventana_correcta(self):
+        ini, fin = _ventana_alarma(self.ronda, self._ahora(12, 30))
+        self.assertEqual(ini, self._ahora(12, 0))
+        self.assertEqual(fin, self._ahora(13, 59, 59))  # siguiente alarma (14:00) − 1s
+
+    def test_ultima_ventana_hasta_hora_fin(self):
+        ini, fin = _ventana_alarma(self.ronda, self._ahora(16, 30))
+        self.assertEqual(ini, self._ahora(16, 0))
+        self.assertEqual(fin, self._ahora(23, 59, 59))  # hora_fin del turno
+
+    # ---- bloqueo / reinicio por ventana ----
+    def test_mismo_qr_dos_ventanas_permitido(self):
+        r1 = self._marcar(self._ahora(12, 30))   # ventana 1
+        r2 = self._marcar(self._ahora(14, 30))   # ventana 2
+        self.assertEqual(r1["resultado"], "ok")
+        self.assertEqual(r2["resultado"], "ok")
+        self.assertEqual(
+            LibroNovedades.objects.filter(punto_control=self.cp, tipo_evento__codigo="arribo").count(), 2
+        )
+
+    def test_mismo_qr_misma_ventana_bloquea(self):
+        r1 = self._marcar(self._ahora(12, 30))
+        r2 = self._marcar(self._ahora(12, 45))   # misma ventana 1
+        self.assertEqual(r1["resultado"], "ok")
+        self.assertEqual(r2["resultado"], "ya_escaneado")
+        self.assertEqual(
+            LibroNovedades.objects.filter(punto_control=self.cp, tipo_evento__codigo="arribo").count(), 1
+        )
+
+    def test_conteo_por_guardia_independiente(self):
+        a = self._marcar(self._ahora(12, 30), guardia=GUARDIA)
+        b = self._marcar(self._ahora(12, 30), guardia=self.GUARDIA_B)  # otro guardia, misma ventana
+        self.assertEqual(a["resultado"], "ok")
+        self.assertEqual(b["resultado"], "ok")  # independiente: B no bloqueado por A
+        self.assertEqual(
+            LibroNovedades.objects.filter(punto_control=self.cp, tipo_evento__codigo="arribo").count(), 2
+        )
+
+    def test_progreso_se_reinicia_en_la_siguiente_ventana(self):
+        cp2 = PuntoControl.objects.create(
+            instalacion_id=10, nombre="P2", lat=str(LAT), lng=str(LNG),
+            tolerancia_mts=30, validar_posicion=True,
+            qr_token="dddddddd-dddd-dddd-dddd-dddddddddddd", activo=True,
+        )
+        RondaSecuencia.objects.create(ronda=self.ronda, punto_control=cp2, orden=2)
+        # Ventana 1: completa los 2 puntos -> 2/2.
+        self._marcar(self._ahora(12, 10), cp=self.cp)
+        r = self._marcar(self._ahora(12, 20), cp=cp2)
+        self.assertEqual(r["progreso"]["escaneados"], 2)
+        # Ventana 2: marcar 1 punto -> progreso 1/2 (RESET, no 3/2).
+        r2 = self._marcar(self._ahora(14, 10), cp=self.cp)
+        self.assertEqual(r2["progreso"]["escaneados"], 1)
+        self.assertEqual(r2["progreso"]["total"], 2)
+
+    def test_antes_de_la_primera_alarma_sin_ventana(self):
+        antes = LibroNovedades.objects.count()
+        res = self._marcar(self._ahora(11, 30))  # antes de 12:00
+        self.assertEqual(res["resultado"], "sin_ventana_activa")
+        self.assertEqual(LibroNovedades.objects.count(), antes)  # no registra
+
+    # ---- cruce de medianoche (unit test del helper) ----
+    def test_cruce_medianoche_ventana_madrugada(self):
+        ronda_noche = Ronda.objects.create(
+            cliente_id=1, instalacion_id=10, nombre="Ronda Noche",
+            fecha_inicio=date(2026, 1, 1),
+            hora_inicio=time(22, 0, 0), hora_fin=time(6, 0, 0),  # cruza medianoche
+        )
+        prog = Programacion.objects.create(ronda=ronda_noche, repite="todos_los_dias", activo=True)
+        for i, (h, m) in enumerate([(23, 0), (1, 0), (3, 0)], start=1):
+            ProgramacionHorario.objects.create(programacion=prog, hora=h, minuto=m, orden=i)
+        # ref de madrugada (01:30) -> ventana [01:00, 02:59:59] del mismo día.
+        ref = self._ahora(1, 30)
+        ini, fin = _ventana_alarma(ronda_noche, ref)
+        self.assertEqual(ini, self._ahora(1, 0))
+        self.assertEqual(fin, self._ahora(2, 59, 59))  # siguiente alarma (03:00) − 1s
+
+    # ---- fallback: ronda SIN alarmas = una vez por turno ----
+    def test_fallback_sin_alarmas_una_vez_por_turno(self):
+        ronda_fb = Ronda.objects.create(
+            cliente_id=1, instalacion_id=12, nombre="Ronda Día",
+            fecha_inicio=date(2026, 1, 1),
+            hora_inicio=time(0, 0, 0), hora_fin=time(23, 59, 59),
+        )
+        cp_fb = PuntoControl.objects.create(
+            instalacion_id=12, nombre="FB", lat=str(LAT), lng=str(LNG),
+            tolerancia_mts=30, validar_posicion=True,
+            qr_token="eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", activo=True,
+        )
+        RondaSecuencia.objects.create(ronda=ronda_fb, punto_control=cp_fb, orden=1)
+        # Sin programacion -> ventana = turno completo. Dos marcas en horas
+        # distintas del MISMO turno -> la segunda se bloquea (una vez por turno).
+        r1 = registrar_escaneo(instalacion_id=12, guardia_keycloak_id=GUARDIA,
+                               qr_token=cp_fb.qr_token, lat=LAT, lng=LNG, texto=None, ahora=self._ahora(12, 0))
+        r2 = registrar_escaneo(instalacion_id=12, guardia_keycloak_id=GUARDIA,
+                               qr_token=cp_fb.qr_token, lat=LAT, lng=LNG, texto=None, ahora=self._ahora(16, 0))
+        self.assertEqual(r1["resultado"], "ok")
+        self.assertEqual(r2["resultado"], "ya_escaneado")

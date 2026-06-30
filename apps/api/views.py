@@ -217,6 +217,12 @@ def _evento_a_http(res):
             "Este QR no pertenece a una ronda activa en este horario.", "sin_ronda_activa"
         )
 
+    if resultado == "sin_ventana_activa":
+        # Fuera de toda ventana de alarma (antes de la 1ª alarma o en un hueco).
+        raise solicitud_invalida(
+            "No tienes una ronda programada en este horario.", "sin_ventana_activa"
+        )
+
     if resultado == "catalogo_incompleto":
         raise catalogo_no_disponible()
 

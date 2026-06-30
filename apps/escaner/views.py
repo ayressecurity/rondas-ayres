@@ -119,6 +119,11 @@ def registrar(request):
             {"ok": False, "error": "Este QR no pertenece a una ronda activa en este horario."},
             status=400,
         )
+    if resultado == "sin_ventana_activa":
+        return JsonResponse(
+            {"ok": False, "error": "No tienes una ronda programada en este horario."},
+            status=400,
+        )
     if resultado == "catalogo_incompleto":
         return JsonResponse(
             {"ok": False, "error": "Falta el catálogo de eventos (corre seed_tipos_evento)."},

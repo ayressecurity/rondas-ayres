@@ -18,7 +18,7 @@ consistente entre web y API.
 
 Zona horaria: todo en America/Santiago vía servidor (timezone.now()/localtime).
 """
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from decimal import Decimal
 from math import asin, cos, radians, sin, sqrt
 
@@ -28,7 +28,11 @@ from django.utils import timezone
 from apps.checkpoints.models import PuntoControl
 from apps.escaner.models import RondaEjecucion
 from apps.novedades.models import LibroNovedades, TipoEvento
-from apps.rondas.models import EstadoGenerico, Ronda, RondaSecuencia
+from apps.rondas.models import EstadoGenerico, ProgramacionHorario, Ronda, RondaSecuencia
+
+# Sentinela: el escaneo cae fuera de toda ventana de alarma (antes de la primera
+# alarma o en un hueco). El service lo traduce a resultado "sin_ventana_activa".
+SIN_VENTANA = object()
 
 # Radio medio de la Tierra en metros (para haversine).
 RADIO_TIERRA_M = 6_371_000
@@ -118,38 +122,78 @@ def _ventana_turno(ronda, ref):
     return _aware(hoy - timedelta(days=1), ini), _aware(hoy, fin)  # madrugada -> inicio ayer
 
 
-def _ejecucion_en_curso(guardia_keycloak_id, instalacion_id):
-    """Última ronda_ejecucion en curso del guardia EN ESTA INSTALACIÓN (o None).
+def _ventana_alarma(ronda, ref):
+    """Sub-ventana de marcaje vigente según las ALARMAS (programacion_horario).
 
-    Filtra SIEMPRE por instalacion_id: si el mismo guardia tiene ejecuciones en
-    curso en VARIAS instalaciones (caso super_admin), jamás se devuelve la de otra
-    instalación. Sin este filtro, se elegía la ejecución más reciente del guardia
-    aunque fuera de OTRA instalación, registrando el evento contra la ronda
-    equivocada (ese era el bug de cruce entre instalaciones)."""
-    return (
-        RondaEjecucion.objects
-        .select_related("ronda")  # _ventana_turno lee ejecucion.ronda sin query extra
-        .filter(
-            guardia_keycloak_id=guardia_keycloak_id,
-            instalacion_id=instalacion_id,
-            estado=RondaEjecucion.Estado.EN_CURSO,
-        )
-        .order_by("-iniciada_en")
-        .first()
+    Las alarmas de la ronda parten el turno en ventanas: cada QR se marca una vez
+    por ventana y se "reinicia" en la siguiente alarma.
+
+    - FALLBACK: si la ronda NO tiene alarmas -> ventana de turno completa
+      (_ventana_turno): comportamiento actual idéntico.
+    - Con alarmas: devuelve (inicio, fin) de la ventana que contiene `ref`, donde
+      inicio = última alarma <= ref y fin = (siguiente alarma − 1s) o hora_fin del
+      turno si es la última.
+    - Si `ref` es ANTERIOR a la primera alarma (hueco al inicio del turno) -> SIN_VENTANA.
+
+    Maneja el cruce de medianoche reusando los límites de _ventana_turno: cada
+    alarma se ancla al día (hoy o mañana) en que cae dentro de [turno_inicio, turno_fin].
+    `ref` es un datetime aware.
+    """
+    turno = _ventana_turno(ronda, ref)
+    if turno is None:                 # ronda sin rango horario (no debería ocurrir)
+        return SIN_VENTANA
+    turno_inicio, turno_fin = turno
+
+    horas = list(
+        ProgramacionHorario.objects
+        .filter(programacion__ronda=ronda, programacion__activo=True)
+        .values_list("hora", "minuto")
     )
+    if not horas:
+        return turno                  # FALLBACK: una marca por turno (como hoy)
+
+    # Cada alarma (time) se mapea al datetime real dentro del turno. El cruce de
+    # medianoche se resuelve probando el día de inicio y el siguiente.
+    un_dia = timedelta(days=1)
+    alarmas = set()
+    for h, m in horas:
+        t = time(h, m)
+        for dia in (turno_inicio.date(), turno_inicio.date() + un_dia):
+            cand = _aware(dia, t)
+            if turno_inicio <= cand <= turno_fin:
+                alarmas.add(cand)
+                break
+    alarmas = sorted(alarmas)
+    if not alarmas:                   # todas fuera del turno (el form ya lo evita)
+        return turno
+
+    ref = timezone.localtime(ref)
+    if ref < alarmas[0]:              # antes de la primera alarma -> hueco
+        return SIN_VENTANA
+
+    inicio, fin = alarmas[0], turno_fin
+    for i, a in enumerate(alarmas):
+        if a <= ref:
+            inicio = a
+            fin = (alarmas[i + 1] - timedelta(seconds=1)) if i + 1 < len(alarmas) else turno_fin
+        else:
+            break
+    return (inicio, fin)
 
 
-def _estado_ejecucion(ejecucion, ventana):
-    """Progreso de la ejecución dentro de la VENTANA del turno: puntos en orden +
+def _estado_ejecucion(ronda_id, guardia_keycloak_id, ventana):
+    """Progreso dentro de la VENTANA (de alarma o de turno): puntos en orden +
     cuáles ya escaneó ESE guardia para ESA ronda dentro de [inicio, fin].
 
     total = puntos en ronda_secuencia. escaneados = puntos DISTINTOS registrados
-    por el guardia en la ventana (se lee de libro_novedades, no de la sesión).
+    por EL guardia en la ventana (se lee SIEMPRE de libro_novedades, nunca de
+    memoria/sesión: así el progreso sobrevive a cierre de app/sesión/reinicio).
+    El conteo es POR GUARDIA (cada guardia su propio avance), como hoy.
     """
     inicio, fin = ventana
     secuencia = (
         RondaSecuencia.objects
-        .filter(ronda_id=ejecucion.ronda_id)
+        .filter(ronda_id=ronda_id)
         .select_related("punto_control")
         .order_by("orden")
     )
@@ -157,8 +201,8 @@ def _estado_ejecucion(ejecucion, ventana):
     completados = set(
         LibroNovedades.objects
         .filter(
-            ronda_id=ejecucion.ronda_id,
-            guardia_keycloak_id=ejecucion.guardia_keycloak_id,
+            ronda_id=ronda_id,
+            guardia_keycloak_id=guardia_keycloak_id,
             timestamp_servidor__gte=inicio,
             timestamp_servidor__lte=fin,
             punto_control_id__in=punto_ids,
@@ -194,8 +238,12 @@ def iniciar_o_reusar_ejecucion(*, instalacion_id, guardia_keycloak_id, ahora):
     if ronda is None:
         raise SinRondaActiva()
 
-    ventana = _ventana_turno(ronda, ahora)
-    inicio, fin = ventana
+    # La reutilización de la ejecución se ancla a la ventana del TURNO (la
+    # ejecución es la "sesión" del turno: vive todo el turno, no se cierra por
+    # ventana de alarma). El progreso mostrado, en cambio, es el de la ventana
+    # de alarma vigente (lo que el guardia realmente puede marcar ahora).
+    ventana_turno = _ventana_turno(ronda, ahora)
+    inicio, fin = ventana_turno
 
     ejecucion = (
         RondaEjecucion.objects
@@ -218,8 +266,12 @@ def iniciar_o_reusar_ejecucion(*, instalacion_id, guardia_keycloak_id, ahora):
             estado=RondaEjecucion.Estado.EN_CURSO,
         )
 
-    estado = _estado_ejecucion(ejecucion, ventana)
-    return ejecucion, ventana, estado
+    # Progreso de la ventana de alarma vigente (o del turno si no hay alarmas /
+    # si aún no entra la primera alarma, solo para mostrar).
+    va = _ventana_alarma(ronda, ahora)
+    ventana_estado = va if va is not SIN_VENTANA else ventana_turno
+    estado = _estado_ejecucion(ronda.id, guardia_keycloak_id, ventana_estado)
+    return ejecucion, ventana_turno, estado
 
 
 def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng, texto, ahora,
@@ -254,14 +306,6 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
     INSERT de ese evento SE CONFIRME (igual que la versión anterior, que escribía
     y luego respondía 404).
     """
-    # Ejecución en curso (si la hay): sus escaneos se etiquetan con su ronda_id.
-    # La ventana del turno se ancla a cuándo se inició esa ejecución. SIEMPRE
-    # acotada a la instalación de operación (instalacion_id), para que nunca se
-    # resuelva la ronda/ejecución de OTRA instalación.
-    ejecucion = _ejecucion_en_curso(guardia_keycloak_id, instalacion_id)
-    ronda_id_evento = ejecucion.ronda_id if ejecucion else None
-    ventana = _ventana_turno(ejecucion.ronda, ejecucion.iniciada_en) if ejecucion else None
-
     # Tiempos: servidor = ahora (real); terreno = el de offline o ahora si no vino.
     ts_servidor = ahora
     ts_evento = timestamp_evento or ahora
@@ -270,11 +314,14 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
 
     with transaction.atomic():
         if cp is None:
+            # No hay punto -> no se conoce la ronda; se estampa la ronda del
+            # momento de la instalación de operación si la hay (informativo).
+            ronda_ne = _ronda_para_ahora(instalacion_id) if instalacion_id else None
             tipo_ne = TipoEvento.objects.filter(codigo="codigo_no_existe").first()
             if tipo_ne:
                 LibroNovedades.objects.create(
                     instalacion_id=0,  # desconocido (no hay punto); sin FK
-                    ronda_id=ronda_id_evento,
+                    ronda_id=ronda_ne.id if ronda_ne else None,
                     guardia_keycloak_id=guardia_keycloak_id,
                     tipo_evento=tipo_ne,
                     timestamp_evento=ts_evento,
@@ -293,23 +340,32 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
         if str(cp.instalacion_id) != str(instalacion_id):
             return {"resultado": "punto_otra_instalacion", "punto_nombre": cp.nombre}
 
-        # Debe existir una ronda ACTIVA cuyo horario contenga la hora actual en
-        # esta instalación. Si no, NO se registra nada (decisión QA #8): no se
-        # permite marcar fuera de ventana de ronda (evita duplicados sin turno).
-        if _ronda_para_ahora(cp.instalacion_id) is None:
+        # BLINDAJE (D.4): la ronda a usar/estampar se resuelve SIEMPRE por la hora
+        # actual y la instalación del punto (no por ejecucion.ronda_id), para no
+        # cruzar de turno/instalación. Si no hay ronda activa -> no se registra.
+        ronda_actual = _ronda_para_ahora(cp.instalacion_id)
+        if ronda_actual is None:
             return {"resultado": "sin_ronda_activa", "punto_nombre": cp.nombre}
 
-        # Bloqueo de re-escaneo POR GUARDIA + TURNO: si ESTE guardia ya registró
-        # ESTE punto, para ESTA ronda, DENTRO de la ventana del turno, no se
-        # registra de nuevo (solo se avisa).
-        if ejecucion and ventana and LibroNovedades.objects.filter(
-            ronda_id=ejecucion.ronda_id,
+        # Ventana de marcaje vigente: la de la ALARMA actual (o el turno completo
+        # si la ronda no tiene alarmas). Si estamos fuera de toda ventana (antes
+        # de la primera alarma o en un hueco) -> no se registra.
+        ventana = _ventana_alarma(ronda_actual, ahora)
+        if ventana is SIN_VENTANA:
+            return {"resultado": "sin_ventana_activa", "punto_nombre": cp.nombre}
+
+        # Bloqueo de re-escaneo POR GUARDIA + RONDA + PUNTO + VENTANA: si ESTE
+        # guardia ya registró ESTE punto, para ESTA ronda, DENTRO de la ventana
+        # de alarma vigente, no se registra de nuevo (solo se avisa). Al entrar la
+        # siguiente alarma cambia la ventana y el QR se "reinicia".
+        if LibroNovedades.objects.filter(
+            ronda_id=ronda_actual.id,
             guardia_keycloak_id=guardia_keycloak_id,
             punto_control=cp,
             timestamp_servidor__gte=ventana[0],
             timestamp_servidor__lte=ventana[1],
         ).exists():
-            estado = _estado_ejecucion(ejecucion, ventana)
+            estado = _estado_ejecucion(ronda_actual.id, guardia_keycloak_id, ventana)
             return {
                 "resultado": "ya_escaneado",
                 "checkpoint": cp.nombre,
@@ -341,7 +397,7 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
 
         evento = LibroNovedades.objects.create(
             instalacion_id=cp.instalacion_id,
-            ronda_id=ronda_id_evento,             # ronda en curso (o null)
+            ronda_id=ronda_actual.id,              # ronda del momento (blindaje)
             punto_control=cp,
             guardia_keycloak_id=guardia_keycloak_id,
             tipo_evento=tipo_evento,
@@ -368,21 +424,15 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
         "dentro_geocerca": dentro_geocerca,
     }
 
-    # Progreso de la ronda en curso (si la hay), dentro de la ventana del turno.
-    # (Igual que antes: el marcar "completada" ocurre FUERA de la transacción.)
-    if ejecucion and ventana:
-        estado = _estado_ejecucion(ejecucion, ventana)
-        resp["pertenece"] = cp.id in estado["punto_ids"]
-        resp["progreso"] = {
-            "escaneados": estado["escaneados"],
-            "total": estado["total"],
-            "puntos": estado["puntos"],
-        }
-        completada = estado["total"] > 0 and estado["escaneados"] >= estado["total"]
-        resp["completada"] = completada
-        if completada and ejecucion.estado != RondaEjecucion.Estado.COMPLETADA:
-            ejecucion.estado = RondaEjecucion.Estado.COMPLETADA
-            ejecucion.finalizada_en = ahora
-            ejecucion.save(update_fields=["estado", "finalizada_en"])
-
+    # Progreso del guardia en la VENTANA vigente (siempre desde libro_novedades).
+    # NOTA: la ejecución (ronda_ejecucion) NO se auto-cierra por ventana (vive todo
+    # el turno) para no romper el reinicio por alarma; "completada" es informativo.
+    estado = _estado_ejecucion(ronda_actual.id, guardia_keycloak_id, ventana)
+    resp["pertenece"] = cp.id in estado["punto_ids"]
+    resp["progreso"] = {
+        "escaneados": estado["escaneados"],
+        "total": estado["total"],
+        "puntos": estado["puntos"],
+    }
+    resp["completada"] = estado["total"] > 0 and estado["escaneados"] >= estado["total"]
     return resp

@@ -7,6 +7,8 @@ cliente_id / instalacion_id NO se exponen: los pone la vista desde la sesión.
 La lista de puntos se restringe a los ACTIVOS de la instalación (seguridad: un
 id de otra instalación no valida porque no está en el queryset del campo).
 """
+from datetime import time
+
 from django import forms
 
 from apps.checkpoints.models import PuntoControl
@@ -138,6 +140,28 @@ class RondaForm(forms.ModelForm):
 
         if repite and not horarios:
             self.add_error(None, "Si defines una programación, agrega al menos un horario válido.")
+
+        # Las alarmas definen VENTANAS de marcaje dentro del turno; por eso no
+        # pueden repetirse ni caer fuera del horario de la ronda. Se valida en el
+        # backend para que nunca lleguen alarmas inválidas a la lógica de ventanas.
+        if repite and horarios:
+            hi_t = cleaned.get("hora_inicio")
+            hf_t = cleaned.get("hora_fin")
+            vistos = set()
+            for (hh, mm) in horarios:
+                if (hh, mm) in vistos:
+                    self.add_error(None, f"Alarma duplicada: {hh:02d}:{mm:02d} (no repitas la misma hora).")
+                vistos.add((hh, mm))
+                if hi_t and hf_t:
+                    t = time(hh, mm)
+                    # Mismo criterio que el turno: rango normal o que cruza medianoche.
+                    dentro = (hi_t <= t <= hf_t) if hi_t <= hf_t else (t >= hi_t or t <= hf_t)
+                    if not dentro:
+                        self.add_error(
+                            None,
+                            f"La alarma {hh:02d}:{mm:02d} está fuera del horario de la ronda "
+                            f"({hi_t.strftime('%H:%M')}–{hf_t.strftime('%H:%M')}).",
+                        )
 
         # Sin repite -> no hay programación (se descartan horarios).
         self.horarios = horarios if repite else []

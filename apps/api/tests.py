@@ -458,6 +458,36 @@ class EventosApiTests(_JwtMixin, TestCase):
         # timestamp_servidor = ahora del server; timestamp_evento = terreno (pasado).
         self.assertGreater(ev.timestamp_servidor, ev.timestamp_evento)
 
+    # ---- API: reinicio por ventana de alarma (mismo service que la web) ----
+    def test_api_reinicio_por_ventana(self):
+        from apps.rondas.models import Programacion, ProgramacionHorario
+
+        # Alarmas 12:00 / 14:00 en la ronda de A (instalación 10, día completo).
+        prog = Programacion.objects.create(ronda=self.ronda, repite="todos_los_dias", activo=True)
+        ProgramacionHorario.objects.create(programacion=prog, hora=12, minuto=0, orden=1)
+        ProgramacionHorario.objects.create(programacion=prog, hora=14, minuto=0, orden=2)
+
+        hoy = dj_tz.localtime(dj_tz.now()).date()
+
+        def momento(hh, mm):
+            return dj_tz.make_aware(datetime.combine(hoy, dtime(hh, mm)))
+
+        # Controlamos el reloj que ve crear_evento (la ronda es de día completo,
+        # así que _ronda_para_ahora —que usa la hora real— igual la encuentra).
+        with patch("apps.api.views.timezone.now", return_value=momento(12, 30)):
+            r1 = self._post(self.URL, self._body(), sub=self.GUARDIA)   # ventana 1
+            r2 = self._post(self.URL, self._body(), sub=self.GUARDIA)   # misma ventana
+        with patch("apps.api.views.timezone.now", return_value=momento(14, 30)):
+            r3 = self._post(self.URL, self._body(), sub=self.GUARDIA)   # ventana 2 (reinicio)
+
+        self.assertEqual(r1.status_code, 201)
+        self.assertEqual(r2.status_code, 200)            # bloqueado en la misma ventana
+        self.assertTrue(r2.json()["ya_registrado"])
+        self.assertEqual(r3.status_code, 201)            # permitido al cambiar de ventana
+        self.assertEqual(
+            LibroNovedades.objects.filter(punto_control=self.cp, tipo_evento__codigo="arribo").count(), 2
+        )
+
 
 @override_settings(MEDIA_ROOT=_MEDIA_TMP)
 class MediaApiTests(_JwtMixin, TestCase):
