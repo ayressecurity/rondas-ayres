@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block titulo %}Nuevo registro vehicular — Rondas{% endblock %}
+
+{% block contenido %}
+<div class="modulo-cabecera">
+    <div>
+        <h1>Nuevo registro vehicular</h1>
+        <p class="contexto-instalacion">Instalación: <strong>{{ instalacion_nombre }}</strong></p>
+    </div>
+</div>
+
+{% if form.non_field_errors %}
+    <div class="form-errores">
+        {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+{% endif %}
+
+{# Los campos se renderizan en el ORDEN de Meta.fields = orden del Google Form. #}
+<form method="post" class="form-tarjeta" novalidate>
+    {% csrf_token %}
+
+    {% for field in form %}
+        <div class="campo-form{% if field.name == 'desplazamiento' %} campo-radio{% endif %}">
+            <label for="{{ field.id_for_label }}">{{ field.label }} <span class="req">*</span></label>
+            {{ field }}
+            {% for error in field.errors %}<p class="campo-error">{{ error }}</p>{% endfor %}
+        </div>
+    {% endfor %}
+
+    <div class="form-acciones">
+        <button type="submit" class="btn btn-primario">Guardar</button>
+        <a href="{% url 'control_vehicular:index' %}" class="btn btn-secundario">Cancelar</a>
+    </div>
+</form>
+{% endblock %}

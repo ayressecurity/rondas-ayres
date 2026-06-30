@@ -1,4 +1,4 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 
 {% block titulo %}Control vehicular — Rondas{% endblock %}
 
@@ -8,10 +8,46 @@
         <h1>Control vehicular</h1>
         <p class="contexto-instalacion">Instalación: <strong>{{ instalacion_nombre }}</strong></p>
     </div>
+    <div class="cabecera-acciones">
+        <a href="{% url 'control_vehicular:nuevo' %}" class="btn btn-primario">Nuevo registro</a>
+    </div>
 </div>
 
-<div class="en-construccion">
-    <span class="etiqueta">En construcción</span>
-    <p>El módulo <strong>Control vehicular</strong> estará disponible próximamente.</p>
+{% if page_obj.object_list %}
+<div class="tabla-scroll">
+    <table class="tabla-objetivos">
+        <thead>
+            <tr>
+                <th>Fecha/Hora</th>
+                <th>Desplazamiento</th>
+                <th>Recinto</th>
+                <th>PPU</th>
+                <th>Tipo</th>
+                <th>Conductor</th>
+                <th>Turno</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for v in page_obj %}
+                <tr class="fila-objetivo">
+                    {# date: convierte el datetime aware a la zona activa (Santiago). #}
+                    <td data-col="Fecha/Hora">{{ v.creado_en|date:"Y-m-d H:i:s" }}</td>
+                    <td data-col="Desplazamiento">{{ v.get_desplazamiento_display }}</td>
+                    <td data-col="Recinto">{{ v.recinto }}</td>
+                    <td data-col="PPU">{{ v.ppu }}</td>
+                    <td data-col="Tipo">{{ v.get_tipo_vehiculo_display }}</td>
+                    <td data-col="Conductor">{{ v.nombre_conductor }}</td>
+                    <td data-col="Turno">{{ v.get_turno_display }}</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
 </div>
+
+{% include "informes/_paginador.html" %}
+{% else %}
+<div class="estado-vacio">
+    <p>Aún no hay registros vehiculares.</p>
+</div>
+{% endif %}
 {% endblock %}
