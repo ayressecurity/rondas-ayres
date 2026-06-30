@@ -1,4 +1,4 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 
 {% block titulo %}Dispositivos — Rondas{% endblock %}
 
@@ -6,12 +6,90 @@
 <div class="modulo-cabecera">
     <div>
         <h1>Dispositivos</h1>
-        <p class="contexto-instalacion">Instalación: <strong>{{ instalacion_nombre }}</strong></p>
+        <p class="contexto-instalacion">Instalación: <strong>{{ instalacion.nombre }}</strong></p>
     </div>
 </div>
 
-<div class="en-construccion">
-    <span class="etiqueta">En construcción</span>
-    <p>El módulo <strong>Dispositivos</strong> estará disponible próximamente.</p>
+{# ---- QR de enrolamiento de la instalación ---- #}
+<section class="form-tarjeta" style="margin-bottom:1.5rem;">
+    <h2 style="margin-top:0;">QR de enrolamiento</h2>
+
+    {% if tiene_qr %}
+        <p>Pega este QR en el puesto. El guardia lo escanea desde la app para enrolar su teléfono y amarrarlo a esta instalación.</p>
+        <div style="display:flex;flex-wrap:wrap;gap:1.5rem;align-items:flex-start;">
+            <img src="{% url 'dispositivos:qr_imagen' %}" alt="QR de enrolamiento"
+                 style="max-width:240px;width:100%;height:auto;border:1px solid #ddd;padding:8px;background:#fff;">
+            <div style="display:flex;flex-direction:column;gap:.6rem;min-width:200px;">
+                <a class="btn btn-secundario" href="{% url 'dispositivos:imprimir' %}" target="_blank" rel="noopener">Imprimir</a>
+                <a class="btn btn-secundario" href="{% url 'dispositivos:qr_imagen' %}?descargar=1">Descargar PNG</a>
+                <form method="post" action="{% url 'dispositivos:rotar' %}"
+                      onsubmit="return confirm('¿Rotar el QR? El cartel anterior dejará de servir para NUEVOS enrolamientos. Los dispositivos ya enrolados seguirán activos.');">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primario" style="width:100%;">Rotar QR</button>
+                </form>
+                <p style="font-size:.85rem;color:#666;margin:0;">
+                    Rotar cambia el secreto e invalida el cartel viejo solo para
+                    <strong>nuevos</strong> enrolamientos. No revoca los dispositivos ya enrolados.
+                </p>
+            </div>
+        </div>
+    {% else %}
+        <p>Esta instalación todavía no tiene un QR de enrolamiento. Genéralo para empezar a enrolar teléfonos.</p>
+        <form method="post" action="{% url 'dispositivos:generar' %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-primario">Generar QR de enrolamiento</button>
+        </form>
+    {% endif %}
+</section>
+
+{# ---- Dispositivos enrolados ---- #}
+<div class="modulo-cabecera">
+    <div><h2 style="margin:0;">Dispositivos enrolados</h2></div>
 </div>
+
+{% if page_obj.object_list %}
+<div class="tabla-scroll">
+    <table class="tabla-objetivos">
+        <thead>
+            <tr>
+                <th>Nombre</th>
+                <th>Estado</th>
+                <th>Última actividad</th>
+                <th>Enrolado</th>
+                <th>Acción</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for d in page_obj %}
+                <tr class="fila-objetivo">
+                    <td data-col="Nombre">{{ d.nombre|default:"—" }}</td>
+                    <td data-col="Estado">{% if d.activo %}Activo{% else %}Revocado{% endif %}</td>
+                    <td data-col="Última actividad">{{ d.last_seen|date:"Y-m-d H:i"|default:"—" }}</td>
+                    <td data-col="Enrolado">{{ d.creado_en|date:"Y-m-d H:i" }}</td>
+                    <td data-col="Acción">
+                        {% if d.activo %}
+                            <form method="post" action="{% url 'dispositivos:revocar' d.id %}"
+                                  onsubmit="return confirm('¿Revocar este dispositivo? Dejará de poder registrar marcas.');">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-secundario">Revocar</button>
+                            </form>
+                        {% else %}
+                            <form method="post" action="{% url 'dispositivos:reactivar' d.id %}">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-secundario">Reactivar</button>
+                            </form>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% include "informes/_paginador.html" %}
+{% else %}
+<div class="estado-vacio">
+    <p>Aún no hay dispositivos enrolados en esta instalación.</p>
+</div>
+{% endif %}
 {% endblock %}

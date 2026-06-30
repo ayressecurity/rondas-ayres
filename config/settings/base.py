@@ -210,6 +210,13 @@ REST_FRAMEWORK = {
     ],
     # Errores siempre en el mismo formato JSON ({"error": {...}}).
     "EXCEPTION_HANDLER": "apps.api.exceptions.api_exception_handler",
+    # Throttling NO global: solo definimos la TASA del scope 'enroll'. Se aplica
+    # únicamente en la vista de enrolamiento (EnrollThrottle, vía @throttle_classes),
+    # que es pública. Sin DEFAULT_THROTTLE_CLASSES => el resto de endpoints NO se
+    # throttlean (siguen solo con el portero JWT).
+    "DEFAULT_THROTTLE_RATES": {
+        "enroll": "1/30min",  # 1 intento de enrolamiento cada 30 min por IP
+    },
 }
 
 # ---- Logging ----

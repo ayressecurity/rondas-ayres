@@ -30,6 +30,10 @@ CLIENTE_FIELDS = [
     "reajuste_ipc", "reajuste_imm", "porcentaje_reajuste_ipc", "porcentaje_variacion_imm",
     "periodicidad_reajuste", "estado", "deleted_at",
 ]
+# IMPORTANTE: 'codigo' y 'qr' son campos PROPIOS de Rondas: NUNCA deben entrar en
+# esta lista (el sync los pisaría con None en cada sincronización). Que estén
+# AUSENTES aquí es justo lo que los preserva (update_or_create solo escribe las
+# columnas de 'defaults'). Hay un test-guardia en apps/dispositivos/tests.py.
 INSTALACION_FIELDS = [
     "cliente_id", "nombre", "categoria", "direccion", "region", "comuna", "latitud",
     "longitud", "dotacion_requerida", "cantidad_guardias", "cantidad_supervisores",

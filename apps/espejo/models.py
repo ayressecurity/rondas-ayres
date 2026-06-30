@@ -51,6 +51,11 @@ class Instalacion(models.Model):
     """ESPEJO de Ayres + campo propio 'codigo'. Sin FK."""
     id = models.BigIntegerField(primary_key=True)  # = id de Ayres
     codigo = models.CharField(max_length=20, unique=True)  # propio de Rondas (ej. AYR-0001)
+    # Secreto de enrolamiento de dispositivos, PROPIO de Rondas (igual que 'codigo').
+    # NUNCA viene de Ayres ni se sincroniza: NO está en INSTALACION_FIELDS (apps/espejo/sync.py),
+    # por eso el sync nunca lo pisa. Arranca null en las instalaciones ya sincronizadas
+    # (unique + null permite múltiples NULL). Se genera/rota desde el módulo Dispositivos (web).
+    qr = models.CharField(max_length=64, unique=True, null=True, blank=True)
     cliente_id = models.BigIntegerField(db_index=True)  # (*) espejo, SIN FK
     nombre = models.CharField(max_length=255)
     categoria = models.CharField(max_length=20, default="media")

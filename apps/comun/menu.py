@@ -35,7 +35,7 @@ MODULOS_INSTALACION = [
     {"key": "informe_novedades", "label": "Informe de Novedades", "url_name": "informes:novedades",   "roles": [], "grupos": []},
     {"key": "control_vehicular", "label": "Control vehicular", "url_name": "control_vehicular:index", "roles": [], "grupos": []},
     {"key": "personas",          "label": "Personas",          "url_name": "personas:index",          "roles": [], "grupos": []},
-    {"key": "dispositivos",      "label": "Dispositivos",      "url_name": "dispositivos:index",      "roles": [], "grupos": []},
+    {"key": "dispositivos",      "label": "Dispositivos",      "url_name": "dispositivos:index",      "roles": ["sspp"], "grupos": []},
 ]
 
 

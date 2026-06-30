@@ -20,8 +20,14 @@ from django.db.models import CharField, Prefetch, Q, Value
 from django.db.models.functions import Cast, Lower, Replace
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import (
+    api_view,
+    authentication_classes,
+    permission_classes,
+    throttle_classes,
+)
 from rest_framework.exceptions import APIException
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from apps.api.exceptions import (
@@ -29,6 +35,10 @@ from apps.api.exceptions import (
     no_encontrado,
     solicitud_invalida,
 )
+from apps.api.throttling import EnrollThrottle
+from apps.dispositivos.models import Dispositivo
+from apps.dispositivos.utils import generar_token, hash_token
+from apps.espejo.models import Instalacion
 from apps.api.serializers import (
     EventoCreateSerializer,
     NotificacionSerializer,
@@ -385,3 +395,59 @@ def subir_media(request, evento_id):
 
     log.info("media_subida evento=%s sub=%s archivos=%s", evento.id, sub, len(creados))
     return Response(creados, status=status.HTTP_201_CREATED)
+
+
+# ---------------------------------------------------------------------------
+# Enrolamiento de dispositivos (Fase 3) — endpoint PÚBLICO.
+#
+# El teléfono aún no tiene credencial, así que aquí NO corre el portero JWT:
+# overrides POR-VISTA (authentication_classes([]) + AllowAny). El resto de la API
+# sigue exigiendo Bearer. Protegido con EnrollThrottle (1 intento/30 min por IP).
+# La instalación se deriva SIEMPRE del secreto en el servidor, jamás del body.
+# ---------------------------------------------------------------------------
+@api_view(["POST"])
+@authentication_classes([])          # sin JWT: enrolamiento público
+@permission_classes([AllowAny])
+@throttle_classes([EnrollThrottle])  # anti fuerza bruta del secreto
+def enroll_dispositivo(request):
+    """POST /api/dispositivos/enroll — enrola un teléfono a una instalación.
+
+    Body: {"s": "<secreto del QR>", "nombre": "<opcional>", "device_info": {opcional}}.
+
+    - La instalación se resuelve por instalacion.qr == s (SIEMPRE en el servidor;
+      el body NO puede elegir instalación).
+    - Secreto ausente o inválido -> 400 genérico. NO revelamos si el secreto
+      existe ni lo logueamos.
+    - OK -> crea un Dispositivo nuevo (re-enrolar siempre crea fila nueva) y
+      devuelve el token EN PLANO una sola vez (show-once): en BD solo queda su
+      hash SHA-256, no hay forma de recuperarlo después.
+    """
+    secreto = (request.data.get("s") or "").strip()
+    instalacion = Instalacion.objects.filter(qr=secreto).first() if secreto else None
+    if instalacion is None:
+        # Mismo error para "ausente" e "inexistente": no filtramos la existencia.
+        raise solicitud_invalida("Código de configuración inválido.", "enrolamiento_invalido")
+
+    # Token individual del dispositivo. Se entrega UNA vez; en BD solo el hash.
+    token = generar_token()
+    nombre = (request.data.get("nombre") or "").strip()[:120]
+    device_info = request.data.get("device_info")
+    if not isinstance(device_info, (dict, list)):
+        device_info = None  # solo aceptamos JSON estructurado; lo demás se ignora
+
+    dispositivo = Dispositivo.objects.create(
+        instalacion_id=instalacion.id,     # SIEMPRE del secreto, NUNCA del body
+        token_hash=hash_token(token),
+        nombre=nombre,
+        device_info=device_info,
+    )
+    log.info("dispositivo_enrolado id=%s instalacion=%s", dispositivo.id, instalacion.id)
+
+    return Response(
+        {
+            "device_token": token,         # show-once: NO se vuelve a poder recuperar
+            "dispositivo_id": dispositivo.id,
+            "instalacion": {"id": instalacion.id, "nombre": instalacion.nombre},
+        },
+        status=status.HTTP_201_CREATED,
+    )
