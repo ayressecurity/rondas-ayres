@@ -58,6 +58,8 @@ from apps.rondas.models import (
     DestinoNotificacion,
     EstadoGenerico,
     Notificacion,
+    Programacion,
+    ProgramacionHorario,
     Ronda,
     RondaGuardia,
     RondaSecuencia,
@@ -130,9 +132,23 @@ def checkpoint_by_qr(request, qr_token):
     return Response(PuntoControlByQrSerializer(cp).data)
 
 
-def _secuencia_prefetch():
-    """Prefetch de la secuencia ordenada por 'orden' (un golpe, sin N+1)."""
-    return Prefetch("rondasecuencia_set", queryset=RondaSecuencia.objects.order_by("orden"))
+def _prefetch_rondas():
+    """Prefetch para servir rondas SIN N+1: secuencia (con nombre del punto) y
+    programación activa con sus horarios. Constante respecto al nº de rondas."""
+    return [
+        # select_related('punto_control') -> el nombre del punto sin query extra.
+        Prefetch(
+            "rondasecuencia_set",
+            queryset=RondaSecuencia.objects.select_related("punto_control").order_by("orden"),
+        ),
+        # Solo programaciones ACTIVAS, con sus horarios ordenados por captura.
+        Prefetch(
+            "programacion_set",
+            queryset=Programacion.objects.filter(activo=True).prefetch_related(
+                Prefetch("programacionhorario_set", queryset=ProgramacionHorario.objects.order_by("orden"))
+            ),
+        ),
+    ]
 
 
 @api_view(["GET"])
@@ -147,26 +163,30 @@ def rondas_mias(request):
       - SIN device (clientes JWT actuales / Postman): comportamiento de SIEMPRE,
         las rondas asignadas al guardia vía RondaGuardia (fallback intacto).
 
-    Cada ronda trae su secuencia de puntos (punto_control_id + orden) para la ruta."""
+    Cada ronda trae turno, programación (alarmas/vueltas con estado temporal) y la
+    secuencia de puntos (con nombre) para armar la ruta."""
+    ahora = timezone.now()  # zona Santiago (USE_TZ); el serializer etiqueta vueltas con esta hora
+    contexto = {"ahora": ahora}
+
     dispositivo = getattr(request, "dispositivo", None)
     if dispositivo is not None:
         rondas = (
             Ronda.objects
             .filter(instalacion_id=dispositivo.instalacion_id, estado=EstadoGenerico.ACTIVA)
-            .prefetch_related(_secuencia_prefetch())
+            .prefetch_related(*_prefetch_rondas())
             .order_by("nombre")
         )
-        return Response(RondaSerializer(rondas, many=True).data)
+        return Response(RondaSerializer(rondas, many=True, context=contexto).data)
 
     # Fallback sin device: SOLO las del guardia (vía RondaGuardia), como hoy.
     ids = _ids_rondas_del_guardia(request.sub_con_guiones)
     rondas = (
         Ronda.objects
         .filter(id__in=ids)
-        .prefetch_related(_secuencia_prefetch())
+        .prefetch_related(*_prefetch_rondas())
         .order_by("nombre")
     )
-    return Response(RondaSerializer(rondas, many=True).data)
+    return Response(RondaSerializer(rondas, many=True, context=contexto).data)
 
 
 @api_view(["GET"])

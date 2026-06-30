@@ -122,63 +122,103 @@ def _ventana_turno(ronda, ref):
     return _aware(hoy - timedelta(days=1), ini), _aware(hoy, fin)  # madrugada -> inicio ayer
 
 
+def ventanas_de_alarma(ronda, ref, horarios=None):
+    """TODAS las ventanas de marcaje de la ronda dentro del turno que contiene `ref`.
+
+    Devuelve una lista ORDENADA por datetime: [(horario, inicio, fin), ...], donde
+    cada alarma (programacion_horario, de programaciones ACTIVAS) abre una ventana:
+    inicio = la alarma; fin = (siguiente alarma − 1s) o hora_fin del turno si es la
+    última. `horario` es el ProgramacionHorario que abre la ventana.
+
+    Cada alarma (hora, minuto) se ancla a un datetime real dentro del turno,
+    resolviendo el cruce de medianoche (se prueba el día de inicio y el siguiente).
+    Si varias programaciones aportan la MISMA hora, se fusiona en una sola ventana
+    (se conserva la 1ª por orden de captura). Todo en zona Santiago.
+
+    Devuelve [] si la ronda no tiene rango horario o no tiene alarmas; el llamador
+    decide el fallback (turno completo). `ref` es un datetime aware.
+
+    `horarios` (opcional): lista de ProgramacionHorario ya cargada (p.ej. desde un
+    prefetch) para EVITAR N+1 al serializar muchas rondas. Si es None, se consulta.
+    """
+    turno = _ventana_turno(ronda, ref)
+    if turno is None:                 # ronda sin rango horario (no debería ocurrir)
+        return []
+    turno_inicio, turno_fin = turno
+
+    if horarios is None:
+        horarios = list(
+            ProgramacionHorario.objects
+            .filter(programacion__ronda=ronda, programacion__activo=True)
+        )
+    # Orden determinista de captura (para elegir representante ante alarmas iguales).
+    horarios = sorted(horarios, key=lambda h: (h.orden, h.id))
+    if not horarios:
+        return []
+
+    # Ancla cada alarma a su datetime dentro del turno (cruce de medianoche).
+    un_dia = timedelta(days=1)
+    anclados = []  # [(dt, horario), ...]
+    for h in horarios:
+        t = time(h.hora, h.minuto)
+        for dia in (turno_inicio.date(), turno_inicio.date() + un_dia):
+            cand = _aware(dia, t)
+            if turno_inicio <= cand <= turno_fin:
+                anclados.append((cand, h))
+                break
+    if not anclados:                  # todas fuera del turno (el form ya lo evita)
+        return []
+
+    # Orden por datetime + fusión de alarmas de igual datetime (1ª por captura).
+    anclados.sort(key=lambda par: par[0])
+    unicos = []
+    vistos = set()
+    for dt, h in anclados:
+        if dt not in vistos:
+            vistos.add(dt)
+            unicos.append((dt, h))
+
+    # Cada ventana: [alarma, siguiente alarma − 1s] o turno_fin si es la última.
+    ventanas = []
+    for i, (dt, h) in enumerate(unicos):
+        fin = (unicos[i + 1][0] - timedelta(seconds=1)) if i + 1 < len(unicos) else turno_fin
+        ventanas.append((h, dt, fin))
+    return ventanas
+
+
 def _ventana_alarma(ronda, ref):
-    """Sub-ventana de marcaje vigente según las ALARMAS (programacion_horario).
+    """Sub-ventana de marcaje VIGENTE según las ALARMAS (la que contiene `ref`).
 
-    Las alarmas de la ronda parten el turno en ventanas: cada QR se marca una vez
-    por ventana y se "reinicia" en la siguiente alarma.
-
+    Thin-consumer de `ventanas_de_alarma` (misma lógica de anclaje y cruce de
+    medianoche, sin duplicar):
     - FALLBACK: si la ronda NO tiene alarmas -> ventana de turno completa
-      (_ventana_turno): comportamiento actual idéntico.
-    - Con alarmas: devuelve (inicio, fin) de la ventana que contiene `ref`, donde
-      inicio = última alarma <= ref y fin = (siguiente alarma − 1s) o hora_fin del
-      turno si es la última.
+      (_ventana_turno): comportamiento idéntico al anterior.
+    - Con alarmas: (inicio, fin) de la ventana que contiene `ref` (inicio = última
+      alarma <= ref; fin = siguiente alarma − 1s o turno_fin si es la última).
     - Si `ref` es ANTERIOR a la primera alarma (hueco al inicio del turno) -> SIN_VENTANA.
 
-    Maneja el cruce de medianoche reusando los límites de _ventana_turno: cada
-    alarma se ancla al día (hoy o mañana) en que cae dentro de [turno_inicio, turno_fin].
     `ref` es un datetime aware.
     """
     turno = _ventana_turno(ronda, ref)
     if turno is None:                 # ronda sin rango horario (no debería ocurrir)
         return SIN_VENTANA
-    turno_inicio, turno_fin = turno
 
-    horas = list(
-        ProgramacionHorario.objects
-        .filter(programacion__ronda=ronda, programacion__activo=True)
-        .values_list("hora", "minuto")
-    )
-    if not horas:
+    ventanas = ventanas_de_alarma(ronda, ref)
+    if not ventanas:
         return turno                  # FALLBACK: una marca por turno (como hoy)
 
-    # Cada alarma (time) se mapea al datetime real dentro del turno. El cruce de
-    # medianoche se resuelve probando el día de inicio y el siguiente.
-    un_dia = timedelta(days=1)
-    alarmas = set()
-    for h, m in horas:
-        t = time(h, m)
-        for dia in (turno_inicio.date(), turno_inicio.date() + un_dia):
-            cand = _aware(dia, t)
-            if turno_inicio <= cand <= turno_fin:
-                alarmas.add(cand)
-                break
-    alarmas = sorted(alarmas)
-    if not alarmas:                   # todas fuera del turno (el form ya lo evita)
-        return turno
-
     ref = timezone.localtime(ref)
-    if ref < alarmas[0]:              # antes de la primera alarma -> hueco
+    if ref < ventanas[0][1]:          # antes de la primera alarma -> hueco
         return SIN_VENTANA
 
-    inicio, fin = alarmas[0], turno_fin
-    for i, a in enumerate(alarmas):
-        if a <= ref:
-            inicio = a
-            fin = (alarmas[i + 1] - timedelta(seconds=1)) if i + 1 < len(alarmas) else turno_fin
+    # Última ventana cuya alarma de inicio ya pasó (<= ref).
+    activa = ventanas[0]
+    for ventana in ventanas:
+        if ventana[1] <= ref:
+            activa = ventana
         else:
             break
-    return (inicio, fin)
+    return (activa[1], activa[2])
 
 
 def _estado_ejecucion(ronda_id, guardia_keycloak_id, ventana):

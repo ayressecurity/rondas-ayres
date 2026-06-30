@@ -37,6 +37,8 @@ from apps.rondas.models import (
     DestinoNotificacion,
     EstadoGenerico,
     Notificacion,
+    Programacion,
+    ProgramacionHorario,
     Ronda,
     RondaGuardia,
     RondaSecuencia,
@@ -212,8 +214,11 @@ class LecturasApiTests(_JwtMixin, TestCase):
         data = resp.json()
         self.assertEqual(len(data), 1)
         self.assertEqual(data[0]["nombre"], "Ronda A")
-        # Trae la secuencia para armar la ruta.
-        self.assertEqual(data[0]["secuencia"], [{"punto_control_id": self.cp.id, "orden": 1}])
+        # Trae la secuencia para armar la ruta (con nombre del punto, opción B).
+        self.assertEqual(
+            data[0]["secuencia"],
+            [{"orden": 1, "punto_control_id": self.cp.id, "nombre": self.cp.nombre}],
+        )
 
     def test_rondas_aislamiento_entre_guardias(self):
         """El guardia A NUNCA ve la ronda del guardia B y viceversa."""
@@ -677,3 +682,178 @@ class MediaApiTests(_JwtMixin, TestCase):
     def test_sin_token_401(self):
         resp = self.client.post(self._url(self.evento.id), {"archivo": [self._foto()]}, format="multipart")
         self.assertEqual(resp.status_code, 401)
+
+
+class VentanasDeAlarmaTests(TestCase):
+    """Helper del service: ventanas_de_alarma + que _ventana_alarma se preserva."""
+
+    def _ronda(self, hi, hf, alarmas):
+        ronda = Ronda.objects.create(
+            cliente_id=1, instalacion_id=30, nombre="R",
+            fecha_inicio=date(2026, 1, 1), hora_inicio=hi, hora_fin=hf,
+        )
+        prog = Programacion.objects.create(ronda=ronda, repite="todos_los_dias", activo=True)
+        for orden, (h, m) in enumerate(alarmas, start=1):
+            ProgramacionHorario.objects.create(programacion=prog, hora=h, minuto=m, orden=orden)
+        return ronda
+
+    def _aware(self, dia, hh, mm):
+        return dj_tz.make_aware(datetime.combine(dia, dtime(hh, mm)))
+
+    def test_lista_ordenada_y_ventanas(self):
+        from apps.comun.services.rondas import _ventana_alarma, ventanas_de_alarma
+
+        ronda = self._ronda(dtime(8, 0), dtime(20, 0), [(10, 0), (14, 0), (18, 0)])
+        ref = self._aware(date(2026, 6, 1), 15, 0)
+        ventanas = ventanas_de_alarma(ronda, ref)
+        # 3 ventanas ordenadas; fin = siguiente alarma − 1s (o turno_fin la última).
+        self.assertEqual(len(ventanas), 3)
+        horas_inicio = [v[1].time().strftime("%H:%M") for v in ventanas]
+        self.assertEqual(horas_inicio, ["10:00", "14:00", "18:00"])
+        self.assertEqual(ventanas[0][2], ventanas[1][1] - timedelta(seconds=1))
+        # _ventana_alarma devuelve la ACTIVA (la que contiene ref = 15:00 -> 14:00).
+        activa = _ventana_alarma(ronda, ref)
+        self.assertEqual(activa[0].time().strftime("%H:%M"), "14:00")
+
+    def test_cruce_de_medianoche(self):
+        from apps.comun.services.rondas import ventanas_de_alarma
+
+        # Turno nocturno 20:00 -> 06:00, alarmas 22:00 y 02:00.
+        ronda = self._ronda(dtime(20, 0), dtime(6, 0), [(22, 0), (2, 0)])
+        ref = self._aware(date(2026, 6, 1), 23, 0)  # noche, mismo día
+        ventanas = ventanas_de_alarma(ronda, ref)
+        self.assertEqual(len(ventanas), 2)
+        # 22:00 del día de inicio, 02:00 del día siguiente (orden por datetime).
+        self.assertEqual(ventanas[0][1].time().strftime("%H:%M"), "22:00")
+        self.assertEqual(ventanas[1][1].time().strftime("%H:%M"), "02:00")
+        self.assertEqual(ventanas[1][1].date(), ventanas[0][1].date() + timedelta(days=1))
+
+    def test_sin_alarmas_devuelve_lista_vacia(self):
+        from apps.comun.services.rondas import ventanas_de_alarma
+
+        ronda = Ronda.objects.create(
+            cliente_id=1, instalacion_id=30, nombre="R", fecha_inicio=date(2026, 1, 1),
+            hora_inicio=dtime(8, 0), hora_fin=dtime(20, 0),
+        )
+        ref = self._aware(date(2026, 6, 1), 15, 0)
+        self.assertEqual(ventanas_de_alarma(ronda, ref), [])
+
+
+class RondasProgramacionApiTests(_JwtMixin, TestCase):
+    """GET /api/rondas?mias enriquecido: turno, programación (vueltas) y secuencia."""
+    SUB = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+
+    def setUp(self):
+        super().setUp()
+        # Instalación 30: ronda diurna 08:00-20:00 con 3 alarmas y 1 punto.
+        self.cp = PuntoControl.objects.create(
+            instalacion_id=30, nombre="Porton Norte",
+            lat="-33.4", lng="-70.56", tolerancia_mts=30, validar_posicion=True,
+            qr_token="30303030-3030-3030-3030-303030303030", activo=True,
+        )
+        self.ronda = Ronda.objects.create(
+            cliente_id=1, instalacion_id=30, nombre="Ronda Día",
+            fecha_inicio=date(2026, 1, 1), hora_inicio=dtime(8, 0), hora_fin=dtime(20, 0),
+        )
+        RondaSecuencia.objects.create(ronda=self.ronda, punto_control=self.cp, orden=1)
+        prog = Programacion.objects.create(ronda=self.ronda, repite="todos_los_dias", activo=True)
+        for orden, h in enumerate((10, 14, 18), start=1):
+            ProgramacionHorario.objects.create(programacion=prog, hora=h, minuto=0, orden=orden)
+        self.token = "dev-prog"
+        Dispositivo.objects.create(instalacion_id=30, token_hash=hash_token(self.token), activo=True)
+
+    def _get(self, momento):
+        with patch("apps.api.views.timezone.now", return_value=momento):
+            return self.client.get(
+                "/api/rondas?mias",
+                HTTP_AUTHORIZATION=f"Bearer {self._token(_claims(sub=self.SUB))}",
+                HTTP_X_DEVICE_TOKEN=self.token,
+            )
+
+    def _momento(self, hh, mm):
+        hoy = dj_tz.localtime(dj_tz.now()).date()
+        return dj_tz.make_aware(datetime.combine(hoy, dtime(hh, mm)))
+
+    def test_programacion_con_estados_y_vuelta_actual(self):
+        # A las 15:00: vuelta 1 (10:00) completada, vuelta 2 (14:00) activa, vuelta 3 pendiente.
+        resp = self._get(self._momento(15, 0))
+        self.assertEqual(resp.status_code, 200)
+        ronda = resp.json()[0]
+        prog = ronda["programacion"]
+        self.assertEqual(prog["repite"], "todos_los_dias")
+        self.assertEqual(prog["total_vueltas"], 3)
+        self.assertEqual(prog["vuelta_actual"], 2)
+        self.assertEqual(
+            prog["horarios"],
+            [
+                {"orden": 1, "hora": "10:00", "estado": "completada"},
+                {"orden": 2, "hora": "14:00", "estado": "activa"},
+                {"orden": 3, "hora": "18:00", "estado": "pendiente"},
+            ],
+        )
+        # secuencia con nombre del punto.
+        self.assertEqual(
+            ronda["secuencia"], [{"orden": 1, "punto_control_id": self.cp.id, "nombre": "Porton Norte"}]
+        )
+
+    def test_antes_de_la_primera_alarma_vuelta_actual_null(self):
+        resp = self._get(self._momento(9, 0))  # antes de las 10:00
+        prog = resp.json()[0]["programacion"]
+        self.assertIsNone(prog["vuelta_actual"])
+        self.assertEqual([h["estado"] for h in prog["horarios"]], ["pendiente", "pendiente", "pendiente"])
+
+    def test_ronda_sin_programacion_devuelve_null(self):
+        # Otra instalación (31) con ronda SIN programación y su propio dispositivo.
+        Ronda.objects.create(
+            cliente_id=1, instalacion_id=31, nombre="Ronda Simple",
+            fecha_inicio=date(2026, 1, 1), hora_inicio=dtime(8, 0), hora_fin=dtime(20, 0),
+        )
+        token = "dev-sin-prog"
+        Dispositivo.objects.create(instalacion_id=31, token_hash=hash_token(token), activo=True)
+        resp = self.client.get(
+            "/api/rondas?mias",
+            HTTP_AUTHORIZATION=f"Bearer {self._token(_claims(sub=self.SUB))}",
+            HTTP_X_DEVICE_TOKEN=token,
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(resp.json()[0]["programacion"])
+
+    def test_cruza_medianoche_en_ronda_nocturna(self):
+        # Instalación 32: ronda nocturna 20:00 -> 06:00.
+        Ronda.objects.create(
+            cliente_id=1, instalacion_id=32, nombre="Ronda Noche",
+            fecha_inicio=date(2026, 1, 1), hora_inicio=dtime(20, 0), hora_fin=dtime(6, 0),
+        )
+        token = "dev-noche"
+        Dispositivo.objects.create(instalacion_id=32, token_hash=hash_token(token), activo=True)
+        resp = self.client.get(
+            "/api/rondas?mias",
+            HTTP_AUTHORIZATION=f"Bearer {self._token(_claims(sub=self.SUB))}",
+            HTTP_X_DEVICE_TOKEN=token,
+        )
+        self.assertTrue(resp.json()[0]["cruza_medianoche"])
+
+    def test_no_n_mas_uno_queries_constantes(self):
+        # Con 2 rondas programadas, SERIALIZAR no escala queries por ronda: 4 fijas
+        # (ronda + secuencia + programacion + horarios). Se mide el serializer aislado
+        # del HTTP/auth para que el conteo sea estable y delate cualquier N+1.
+        from apps.api.serializers import RondaSerializer
+        from apps.api.views import _prefetch_rondas
+
+        r2 = Ronda.objects.create(
+            cliente_id=1, instalacion_id=30, nombre="Ronda Día 2",
+            fecha_inicio=date(2026, 1, 1), hora_inicio=dtime(8, 0), hora_fin=dtime(20, 0),
+        )
+        RondaSecuencia.objects.create(ronda=r2, punto_control=self.cp, orden=1)
+        prog2 = Programacion.objects.create(ronda=r2, repite="todos_los_dias", activo=True)
+        ProgramacionHorario.objects.create(programacion=prog2, hora=11, minuto=0, orden=1)
+
+        qs = (
+            Ronda.objects
+            .filter(instalacion_id=30, estado=EstadoGenerico.ACTIVA)
+            .prefetch_related(*_prefetch_rondas())
+            .order_by("nombre")
+        )
+        with self.assertNumQueries(4):
+            data = RondaSerializer(qs, many=True, context={"ahora": self._momento(15, 0)}).data
+            self.assertEqual(len(data), 2)
