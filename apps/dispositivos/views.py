@@ -182,23 +182,14 @@ def _dispositivo_de_instalacion(request, pk):
 @requiere_instalacion
 @solo_sspp
 @require_POST
-def revocar(request, pk):
-    """Revoca un dispositivo (soft: activo=False). Nunca se borra la fila."""
-    disp = _dispositivo_de_instalacion(request, pk)
-    disp.activo = False
-    disp.save(update_fields=["activo"])
-    messages.success(request, "Dispositivo revocado.")
-    return redirect("dispositivos:index")
+def eliminar(request, pk):
+    """Elimina un dispositivo (borrado REAL de la fila), con aislamiento por
+    instalación (_dispositivo_de_instalacion -> 404 si es de otra).
 
-
-@login_required
-@requiere_instalacion
-@solo_sspp
-@require_POST
-def reactivar(request, pk):
-    """Reactiva un dispositivo previamente revocado (activo=True)."""
+    Su token_hash se libera y el teléfono deja de autenticar. Las marcas
+    históricas (libro_novedades.dispositivo_id) conservan el id: al no haber FK,
+    quedan como referencia huérfana (no cascadea ni falla). Solo web."""
     disp = _dispositivo_de_instalacion(request, pk)
-    disp.activo = True
-    disp.save(update_fields=["activo"])
-    messages.success(request, "Dispositivo reactivado.")
+    disp.delete()
+    messages.success(request, "Dispositivo eliminado.")
     return redirect("dispositivos:index")

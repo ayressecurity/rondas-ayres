@@ -20,4 +20,6 @@ urlpatterns = [
     path("eventos/<int:evento_id>/media", views.subir_media, name="subir_media"),
     # POST /api/dispositivos/enroll — enrolamiento PÚBLICO de un teléfono (Fase 3).
     path("dispositivos/enroll", views.enroll_dispositivo, name="enroll_dispositivo"),
+    # POST /api/sesion/inicio — inicio de turno del guardia (sesion_inicio).
+    path("sesion/inicio", views.sesion_inicio, name="sesion_inicio"),
 ]

@@ -857,3 +857,85 @@ class RondasProgramacionApiTests(_JwtMixin, TestCase):
         with self.assertNumQueries(4):
             data = RondaSerializer(qs, many=True, context={"ahora": self._momento(15, 0)}).data
             self.assertEqual(len(data), 2)
+
+
+@override_settings(MEDIA_ROOT=_MEDIA_TMP)
+class SesionApiTests(_JwtMixin, TestCase):
+    """POST /api/sesion/inicio — inicio de turno (sesion_inicio) con fotos opcionales."""
+    URL = "/api/sesion/inicio"
+    SUB = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+    def setUp(self):
+        super().setUp()
+        call_command("seed_tipos_evento")  # necesita 'sesion_inicio' en el catálogo
+        self.token = "dev-sesion"
+        self.disp = Dispositivo.objects.create(
+            instalacion_id=40, token_hash=hash_token(self.token), activo=True,
+        )
+
+    def _foto(self, nombre="foto.jpg", contenido=b"datos-jpeg"):
+        return SimpleUploadedFile(nombre, contenido, content_type="image/jpeg")
+
+    def _post(self, fotos=None, sub=None, device=True, texto=None):
+        cuerpo = {}
+        if fotos:
+            cuerpo["fotos"] = fotos
+        if texto is not None:
+            cuerpo["texto"] = texto
+        extra = {"HTTP_AUTHORIZATION": f"Bearer {self._token(_claims(sub=sub or self.SUB))}"}
+        if device:
+            extra["HTTP_X_DEVICE_TOKEN"] = self.token
+        return self.client.post(self.URL, cuerpo, format="multipart", **extra)
+
+    def test_inicio_sin_foto_201(self):
+        resp = self._post()
+        self.assertEqual(resp.status_code, 201)
+        data = resp.json()
+        self.assertEqual(data["tipo_evento"], "sesion_inicio")
+        self.assertEqual(data["instalacion_id"], 40)
+        self.assertEqual(data["fotos"], [])
+        ev = LibroNovedades.objects.get(id=data["id"])
+        self.assertEqual(ev.tipo_evento.codigo, "sesion_inicio")
+        self.assertEqual(ev.dispositivo_id, self.disp.id)     # sellado por el device
+        self.assertEqual(ev.instalacion_id, 40)               # de la instalación del device
+        self.assertEqual(ev.guardia_keycloak_id, self.SUB)    # del token, CON guiones
+        self.assertIsNone(ev.punto_control_id)                # evento simple: sin punto/ronda
+        self.assertIsNone(ev.ronda_id)
+
+    def test_inicio_con_una_foto_201(self):
+        resp = self._post(fotos=[self._foto()])
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(len(resp.json()["fotos"]), 1)
+        ev_id = resp.json()["id"]
+        self.assertEqual(LibroNovedadesMedia.objects.filter(libro_novedades_id=ev_id).count(), 1)
+
+    def test_inicio_con_dos_fotos_201(self):
+        resp = self._post(fotos=[self._foto("a.jpg"), self._foto("b.png", b"datos-png")])
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(len(resp.json()["fotos"]), 2)
+
+    def test_inicio_con_tres_fotos_400(self):
+        antes = LibroNovedades.objects.count()
+        resp = self._post(fotos=[self._foto("a.jpg"), self._foto("b.jpg"), self._foto("c.jpg")])
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["codigo"], "solicitud_invalida")
+        self.assertEqual(LibroNovedades.objects.count(), antes)  # nada creado
+
+    def test_inicio_foto_invalida_400_sin_crear_evento(self):
+        antes = LibroNovedades.objects.count()
+        malo = SimpleUploadedFile("virus.exe", b"MZ", content_type="application/octet-stream")
+        resp = self._post(fotos=[malo])
+        self.assertEqual(resp.status_code, 400)
+        # todo-o-nada: no se creó el evento ni media (la transacción revierte).
+        self.assertEqual(LibroNovedades.objects.count(), antes)
+        self.assertEqual(LibroNovedadesMedia.objects.count(), 0)
+
+    def test_inicio_sin_device_400(self):
+        resp = self._post(device=False)
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["mensaje"], "Falta el dispositivo (X-Device-Token).")
+        self.assertEqual(LibroNovedades.objects.count(), 0)
+
+    def test_inicio_sin_token_401(self):
+        resp = self.client.post(self.URL, {}, format="multipart", HTTP_X_DEVICE_TOKEN=self.token)
+        self.assertEqual(resp.status_code, 401)

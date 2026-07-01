@@ -53,10 +53,10 @@ def index(request):
                             libro_novedades=evento, tipo=TipoMedia.FOTO, path=path
                         )
                 n = len(form.imagenes)
-                messages.success(
-                    request,
-                    f"Novedad reportada con {n} foto{'s' if n != 1 else ''}.",
-                )
+                if n == 0:
+                    messages.success(request, "Novedad reportada (sin fotos).")
+                else:
+                    messages.success(request, f"Novedad reportada con {n} foto{'s' if n != 1 else ''}.")
                 return redirect("reportar_novedad:index")  # PRG: limpia el formulario
     else:
         form = ReportarNovedadForm()

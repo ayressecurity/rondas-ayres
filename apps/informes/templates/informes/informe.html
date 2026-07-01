@@ -37,7 +37,15 @@
                 <tr class="fila-objetivo">
                     {# date: convierte el datetime aware a la zona activa (Santiago), sin decimales. #}
                     <td data-col="Fecha/Hora">{{ ev.timestamp_evento|date:"Y-m-d H:i:s" }}</td>
-                    <td data-col="Tipo de evento">{{ ev.tipo_evento.nombre }}</td>
+                    <td data-col="Tipo de evento">
+                        {% if ev.tipo_evento.codigo == "sesion_inicio" %}
+                            {# Solo esta fila es clickeable: abre el modal con guardia + foto. #}
+                            <button type="button" class="chip-sesion" data-guardia="{{ ev.guardia_nombre }}"
+                                    data-foto="{% if ev.foto_urls %}{{ ev.foto_urls.0 }}{% endif %}">
+                                {{ ev.tipo_evento.nombre }}
+                            </button>
+                        {% else %}{{ ev.tipo_evento.nombre }}{% endif %}
+                    </td>
                     <td data-col="Punto de control">{{ ev.punto_control.nombre|default:"—" }}</td>
                     <td data-col="Guardia">{{ ev.guardia_nombre }}</td>
                     <td data-col="Coordenadas">
@@ -75,4 +83,80 @@
     {% endif %}
 </div>
 {% endif %}
+
+{# Modal de inicio de sesión: nombre del guardia + su foto (o aviso si no hay). #}
+<style>
+    .chip-sesion {
+        background: none; border: 0; padding: 0; cursor: pointer;
+        color: #CC3333; font: inherit; text-decoration: underline;
+    }
+    .sesion-modal { position: fixed; inset: 0; display: none; z-index: 1000; }
+    .sesion-modal[aria-hidden="false"] { display: block; }
+    .sesion-modal-overlay { position: absolute; inset: 0; background: rgba(51,51,51,.6); }
+    .sesion-modal-caja {
+        position: relative; max-width: 420px; width: calc(100% - 32px);
+        margin: 8vh auto 0; background: #fff; border-radius: 8px; overflow: hidden;
+        box-shadow: 0 10px 40px rgba(0,0,0,.3);
+    }
+    .sesion-modal-cabecera {
+        display: flex; justify-content: space-between; align-items: center;
+        background: #CC3333; color: #fff; padding: 12px 16px;
+    }
+    .sesion-modal-cabecera h2 { margin: 0; font-size: 1.05rem; }
+    .sesion-modal-cerrar { background: none; border: 0; color: #fff; font-size: 1.4rem; cursor: pointer; line-height: 1; }
+    .sesion-modal-cuerpo { padding: 16px; text-align: center; }
+    .sesion-modal-cuerpo img { max-width: 100%; height: auto; border-radius: 4px; }
+    .sesion-modal-sin { color: #666; padding: 24px 0; }
+</style>
+<div class="sesion-modal" id="sesionModal" aria-hidden="true">
+    <div class="sesion-modal-overlay" data-sesion-cerrar></div>
+    <div class="sesion-modal-caja" role="dialog" aria-modal="true" aria-labelledby="sesionModalTitulo">
+        <div class="sesion-modal-cabecera">
+            <h2 id="sesionModalTitulo">Inicio de sesión</h2>
+            <button type="button" class="sesion-modal-cerrar" data-sesion-cerrar aria-label="Cerrar">×</button>
+        </div>
+        <div class="sesion-modal-cuerpo">
+            <p><strong id="sesionModalGuardia"></strong></p>
+            <div id="sesionModalFoto"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    var modal = document.getElementById("sesionModal");
+    if (!modal) { return; }
+    var elGuardia = document.getElementById("sesionModalGuardia");
+    var elFoto = document.getElementById("sesionModalFoto");
+
+    function abrir(guardia, foto) {
+        elGuardia.textContent = guardia || "—";
+        if (foto) {
+            elFoto.innerHTML = "";
+            var img = document.createElement("img");
+            img.src = foto;
+            img.alt = "Foto de inicio de sesión";
+            elFoto.appendChild(img);
+        } else {
+            elFoto.innerHTML = '<p class="sesion-modal-sin">El guardia no subió imagen</p>';
+        }
+        modal.setAttribute("aria-hidden", "false");
+    }
+    function cerrar() { modal.setAttribute("aria-hidden", "true"); }
+
+    document.querySelectorAll(".chip-sesion").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+            abrir(btn.getAttribute("data-guardia"), btn.getAttribute("data-foto"));
+        });
+    });
+    modal.querySelectorAll("[data-sesion-cerrar]").forEach(function (el) {
+        el.addEventListener("click", cerrar);
+    });
+    document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") { cerrar(); }
+    });
+})();
+</script>
 {% endblock %}

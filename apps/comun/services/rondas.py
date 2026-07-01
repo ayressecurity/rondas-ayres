@@ -482,3 +482,37 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
     }
     resp["completada"] = estado["total"] > 0 and estado["escaneados"] >= estado["total"]
     return resp
+
+
+def registrar_evento_simple(*, instalacion_id, guardia_keycloak_id, codigo_tipo,
+                            dispositivo_id=None, lat=None, lng=None, texto=None,
+                            ahora, timestamp_evento=None, estado="ok"):
+    """Registra un evento SIMPLE en libro_novedades (SIN punto_control ni ronda).
+
+    Para eventos que no son arribos de ronda: sesión (sesion_inicio/sesion_fin) y
+    otros de dispositivo. Reusa el MISMO patrón de INSERT que la rama
+    `codigo_no_existe` de registrar_escaneo, pero como helper reutilizable — NO
+    toca registrar_escaneo ni el flujo de marcaje.
+
+    - Resuelve tipo_evento por `codigo_tipo`; si falta -> {"resultado":"catalogo_incompleto"}
+      (el adaptador lo traduce a 503, igual que el resto).
+    - `guardia_keycloak_id` se escribe TAL CUAL (CON guiones), como en todo el service.
+    - Devuelve {"resultado":"ok","libro_id":id,"tipo_evento":codigo_tipo}.
+    """
+    tipo = TipoEvento.objects.filter(codigo=codigo_tipo).first()
+    if tipo is None:
+        return {"resultado": "catalogo_incompleto"}
+
+    evento = LibroNovedades.objects.create(
+        instalacion_id=instalacion_id,
+        guardia_keycloak_id=guardia_keycloak_id,
+        dispositivo_id=dispositivo_id,
+        tipo_evento=tipo,
+        timestamp_evento=timestamp_evento or ahora,
+        timestamp_servidor=ahora,
+        lat=lat,
+        lng=lng,
+        estado=estado,
+        texto=texto,
+    )
+    return {"resultado": "ok", "libro_id": evento.id, "tipo_evento": codigo_tipo}

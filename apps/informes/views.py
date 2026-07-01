@@ -44,11 +44,15 @@ def _filtro_novedades(qs):
 @login_required
 @requiere_instalacion
 def informe_rondas(request):
+    # con_imagen=True adjunta ev.foto_urls (1 query/página, reusa _adjuntar_fotos):
+    # lo usa el modal de sesion_inicio para mostrar la foto del guardia. NO cambia
+    # las columnas del informe.
     return render_informe(
         request,
         titulo="Informe de Rondas",
         aplica_filtro=_filtro_rondas,
         export_url="informes:exportar_rondas",
+        con_imagen=True,
     )
 
 

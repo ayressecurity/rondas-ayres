@@ -48,18 +48,10 @@
                     <td data-col="Última actividad">{{ d.last_seen|date:"Y-m-d H:i"|default:"—" }}</td>
                     <td data-col="Enrolado">{{ d.creado_en|date:"Y-m-d H:i" }}</td>
                     <td data-col="Acción">
-                        {% if d.activo %}
-                            <form method="post" action="{% url 'dispositivos:revocar' d.id %}"
-                                  onsubmit="return confirm('¿Revocar este dispositivo? Dejará de poder registrar marcas.');">
-                                {% csrf_token %}
-                                <button type="submit" class="btn btn-secundario">Revocar</button>
-                            </form>
-                        {% else %}
-                            <form method="post" action="{% url 'dispositivos:reactivar' d.id %}">
-                                {% csrf_token %}
-                                <button type="submit" class="btn btn-secundario">Reactivar</button>
-                            </form>
-                        {% endif %}
+                        {# Abre el modal de confirmación; el POST real lo hace el form del modal. #}
+                        <button type="button" class="btn btn-secundario btn-eliminar"
+                                data-url="{% url 'dispositivos:eliminar' d.id %}"
+                                data-nombre="{{ d.nombre|default:'este dispositivo' }}">Eliminar registro</button>
                     </td>
                 </tr>
             {% endfor %}
@@ -103,4 +95,49 @@
     </div>
 </div>
 {% endif %}
+
+{# Modal de confirmación de ELIMINAR (borrado real). Reutiliza el patrón qr-modal. #}
+<div class="qr-modal" id="eliminarModal" hidden>
+    <div class="qr-modal-overlay" data-elim-cerrar></div>
+    <div class="qr-modal-caja" role="dialog" aria-modal="true" aria-labelledby="eliminarModalTitulo">
+        <div class="qr-modal-cabecera">
+            <h2 id="eliminarModalTitulo">Eliminar dispositivo</h2>
+            <button type="button" class="qr-modal-cerrar" data-elim-cerrar aria-label="Cerrar">×</button>
+        </div>
+        <p class="qr-modal-sub">
+            ¿Eliminar <strong id="eliminarNombre"></strong>? Esta acción es
+            <strong>permanente</strong>: el teléfono dejará de autenticar y las marcas
+            históricas conservarán la referencia al dispositivo (queda huérfana, sin FK).
+        </p>
+        <form method="post" id="eliminarForm">
+            {% csrf_token %}
+            <div class="form-acciones">
+                <button type="button" class="btn btn-secundario" data-elim-cerrar>Cancelar</button>
+                <button type="submit" class="btn btn-primario">Eliminar registro</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    var modal = document.getElementById("eliminarModal");
+    if (!modal) { return; }
+    var form = document.getElementById("eliminarForm");
+    var nombre = document.getElementById("eliminarNombre");
+
+    function abrir(url, nom) { form.action = url; nombre.textContent = nom; modal.hidden = false; }
+    function cerrar() { modal.hidden = true; }
+
+    document.querySelectorAll(".btn-eliminar").forEach(function (btn) {
+        btn.addEventListener("click", function () { abrir(btn.dataset.url, btn.dataset.nombre); });
+    });
+    modal.querySelectorAll("[data-elim-cerrar]").forEach(function (el) {
+        el.addEventListener("click", cerrar);
+    });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape") { cerrar(); } });
+})();
+</script>
 {% endblock %}

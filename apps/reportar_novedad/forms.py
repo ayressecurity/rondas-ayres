@@ -25,10 +25,8 @@ class ReportarNovedadForm(forms.Form):
                                      "placeholder": "Describe la novedad…"}),
     )
     # Lista de fotos como JSON de dataURLs, llenada por el JS de la cámara.
-    fotos_json = forms.CharField(
-        widget=forms.HiddenInput,
-        error_messages={"required": "Debes tomar al menos una foto antes de guardar."},
-    )
+    # OPCIONAL: se puede reportar solo con texto (la observación sí es obligatoria).
+    fotos_json = forms.CharField(widget=forms.HiddenInput, required=False)
 
     def clean_texto(self):
         texto = (self.cleaned_data.get("texto") or "").strip()
@@ -56,13 +54,20 @@ class ReportarNovedadForm(forms.Form):
         return crudo, FORMATOS_PERMITIDOS[formato]
 
     def clean_fotos_json(self):
-        bruto = self.cleaned_data.get("fotos_json") or ""
+        bruto = (self.cleaned_data.get("fotos_json") or "").strip()
+        # Foto OPCIONAL: sin fotos -> imagenes vacías (se guarda solo el texto).
+        if not bruto:
+            self.imagenes = []
+            return bruto
         try:
             lista = json.loads(bruto)
         except (ValueError, TypeError):
             raise forms.ValidationError("No se recibieron las fotos correctamente.")
-        if not isinstance(lista, list) or not lista:
-            raise forms.ValidationError("Debes tomar al menos una foto antes de guardar.")
+        if not isinstance(lista, list):
+            raise forms.ValidationError("No se recibieron las fotos correctamente.")
+        if not lista:
+            self.imagenes = []
+            return bruto
         if len(lista) > self.MAX_FOTOS:
             raise forms.ValidationError(f"Máximo {self.MAX_FOTOS} fotos por novedad.")
         # imagenes = lista de (bytes, ext); la usa la vista para guardar cada una.

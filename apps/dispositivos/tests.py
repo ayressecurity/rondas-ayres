@@ -206,24 +206,21 @@ class DispositivosWebTests(TestCase):
         self.assertNotEqual(self.inst.qr, "secreto-viejo")  # secreto cambiado
         self.assertTrue(disp.activo)                        # el dispositivo sigue activo
 
-    # ---- revocar / reactivar ----
-    def test_revocar_y_reactivar(self):
+    # ---- eliminar (borrado real) ----
+    def test_eliminar_borra_la_fila(self):
         disp = Dispositivo.objects.create(
             instalacion_id=self.inst.id, token_hash="b" * 64, activo=True,
         )
-        self.client.post(reverse("dispositivos:revocar", args=[disp.id]))
-        disp.refresh_from_db()
-        self.assertFalse(disp.activo)
+        resp = self.client.post(reverse("dispositivos:eliminar", args=[disp.id]))
+        self.assertRedirects(resp, reverse("dispositivos:index"))
+        self.assertFalse(Dispositivo.objects.filter(id=disp.id).exists())  # borrado real
 
-        self.client.post(reverse("dispositivos:reactivar", args=[disp.id]))
-        disp.refresh_from_db()
-        self.assertTrue(disp.activo)
-
-    def test_revocar_dispositivo_de_otra_instalacion_404(self):
-        # Aislamiento: no se puede tocar un dispositivo de otra instalación.
+    def test_eliminar_dispositivo_de_otra_instalacion_404(self):
+        # Aislamiento: no se puede borrar un dispositivo de otra instalación.
         ajeno = Dispositivo.objects.create(instalacion_id=999, token_hash="c" * 64)
-        resp = self.client.post(reverse("dispositivos:revocar", args=[ajeno.id]))
+        resp = self.client.post(reverse("dispositivos:eliminar", args=[ajeno.id]))
         self.assertEqual(resp.status_code, 404)
+        self.assertTrue(Dispositivo.objects.filter(id=ajeno.id).exists())  # no se tocó
 
     def test_lista_vacia_mensaje(self):
         resp = self.client.get(reverse("dispositivos:index"))

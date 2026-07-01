@@ -1,9 +1,12 @@
-// Esquema BBDD Rondas v1.0 — 25-06-2026 — pegar en https://dbdiagram.io
-// Alineado al esquema REAL (dump ayres360.sql). Reemplaza al v0.9.
+// Esquema BBDD Rondas v2.0 — 30-06-2026 — pegar en https://dbdiagram.io
+// Alineado al esquema REAL (dump ayres360.sql). Reemplaza al v1.0.
 // (*) = referencia lógica (espejo Ayres o Keycloak): NO es FK.
 // FK reales solo entre tablas propias de Rondas.
-// cliente/instalacion = espejo de Ayres (sin FK). vehiculo sin relaciones. persona/dispositivo solo PK.
+// cliente/instalacion = espejo de Ayres (sin FK), + campos propios codigo y qr. vehiculo sin relaciones. persona solo PK.
+// dispositivo = enrolamiento por QR (sin FK; ref logica a instalacion).
 // keycloak_id: char(32) SIN guiones en cuentas_usuario; varchar(36) CON guiones en libro/ronda_*/vehiculo.
+// CAMBIOS v2.0: instalacion.qr (secreto de enrolamiento); tabla dispositivo detallada;
+//   libro_novedades.dispositivo_id (ya existia) documentado como ref logica al dispositivo.
 
 Enum estado_av {
   activo
@@ -85,6 +88,7 @@ Table cliente {
 Table instalacion {
   id bigint [pk, note: '= id de Ayres']
   codigo varchar(20) [not null, unique, note: 'propio de Rondas (AYR-00XX); estable, NO se sobreescribe']
+  qr varchar(64) [unique, note: 'propio de Rondas; secreto del QR de enrolamiento del puesto; NO se sobreescribe por el sync; nullable']
   cliente_id bigint [not null, note: '(*) espejo, indice, SIN FK']
   nombre varchar(255) [not null]
   categoria varchar(20) [not null]
@@ -116,8 +120,9 @@ Table instalacion {
   indexes {
     cliente_id
     codigo [unique]
+    qr [unique]
   }
-  Note: 'ESPEJO de Ayres (réplica completa) + campo propio codigo. Sin FK.'
+  Note: 'ESPEJO de Ayres (réplica completa) + campos propios codigo y qr (no los pisa el sync). Sin FK.'
 }
 
 // ===================== CATALOGO =====================
@@ -237,7 +242,7 @@ Table ronda_ejecucion {
     guardia_keycloak_id
     instalacion_id
   }
-  Note: 'Usada por el escáner. Bloqueo de re-escaneo por guardia + ronda + ventana de turno.'
+  Note: 'Usada por el escáner. Bloqueo de re-escaneo por guardia + ronda + ventana de alarma.'
 }
 Table libro_novedades {
   id bigint [pk, increment]
@@ -245,7 +250,7 @@ Table libro_novedades {
   ronda_id bigint [note: 'se llena cuando el escaneo viene de una ronda en curso']
   punto_control_id bigint
   guardia_keycloak_id varchar(36) [not null, note: '(*) sub Keycloak, CON guiones']
-  dispositivo_id bigint [note: '(*) ref lógica a dispositivo.id; SIN FK']
+  dispositivo_id bigint [note: '(*) ref lógica a dispositivo.id; SIN FK; nullable (se llena si la marca trae X-Device-Token)']
   tipo_evento_id smallint [not null]
   timestamp_evento datetime [not null, note: 'hora en terreno']
   timestamp_servidor datetime [not null, note: 'hora de llegada al server (soporta offline)']
@@ -270,6 +275,23 @@ Table libro_novedades_media {
   Note: 'Uno-a-muchos: un evento => varias fotos.'
 }
 
+// ===================== DISPOSITIVOS (enrolamiento por QR, sin FK) =====================
+Table dispositivo {
+  id bigint [pk, increment]
+  instalacion_id bigint [not null, note: '(*) espejo, INDEX, SIN FK; sale del secreto del QR, no del teléfono']
+  token_hash varchar(64) [not null, unique, note: 'SHA-256 del token del dispositivo; el token en claro se entrega 1 sola vez']
+  nombre varchar(120) [note: 'etiqueta para que el SSPP lo reconozca']
+  activo tinyint [not null, default: 1, note: 'revocar = activo 0 (soft)']
+  device_info json [note: 'modelo, versión Android, etc.']
+  last_seen datetime [note: 'se actualiza cuando el dispositivo hace una petición (throttle 5 min)']
+  creado_en datetime [not null]
+  indexes {
+    instalacion_id
+    token_hash [unique]
+  }
+  Note: 'Teléfono enrolado, amarrado a una instalación. El enrolamiento usa instalacion.qr. Sin FK (ref lógica).'
+}
+
 // ===================== CONTROL VEHICULAR (sin FK) =====================
 Table vehiculo {
   id bigint [pk, increment]
@@ -285,14 +307,10 @@ Table vehiculo {
   creado_en datetime [not null]
 }
 
-// ===================== PENDIENTES (solo PK) =====================
+// ===================== PENDIENTE (solo PK) =====================
 Table persona {
   id bigint [pk, increment]
   Note: 'POR DETALLAR. Aparte de usuario y de guardia. Sin relaciones.'
-}
-Table dispositivo {
-  id bigint [pk, increment]
-  Note: 'POR DETALLAR (tabla y modulo). Solo PK por ahora.'
 }
 
 // ===================== FK REALES (solo tablas propias de Rondas) =====================
@@ -307,3 +325,5 @@ Ref: libro_novedades.ronda_id > ronda.id
 Ref: libro_novedades.punto_control_id > punto_control.id
 Ref: libro_novedades.tipo_evento_id > tipo_evento.id
 Ref: libro_novedades_media.libro_novedades_id > libro_novedades.id
+// SIN FK: espejo (cliente, instalacion), vehiculo, persona, dispositivo y toda referencia a espejo/Keycloak.
+// dispositivo.instalacion_id y libro_novedades.dispositivo_id son referencias lógicas (sin FK).

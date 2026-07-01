@@ -51,6 +51,7 @@ from apps.comun.services.rondas import (
     SinRondaActiva,
     iniciar_o_reusar_ejecucion,
     registrar_escaneo,
+    registrar_evento_simple,
 )
 from apps.cuentas.identidad import norm_keycloak_id
 from apps.novedades.models import LibroNovedades, LibroNovedadesMedia, TipoMedia
@@ -419,8 +420,20 @@ def subir_media(request, evento_id):
     if not archivos:
         raise solicitud_invalida("No se recibió ningún archivo (campo 'archivo').", "sin_archivo")
 
-    # 1) VALIDAR TODOS antes de guardar nada (todo-o-nada: si uno falla, no se
-    #    persiste ninguno, para no dejar media a medias).
+    creados = guardar_media(evento, archivos)
+    log.info("media_subida evento=%s sub=%s archivos=%s", evento.id, sub, len(creados))
+    return Response(creados, status=status.HTTP_201_CREATED)
+
+
+def guardar_media(evento, archivos):
+    """Valida (tipo + tamaño) y guarda TODOS los archivos en libro_novedades_media
+    del evento dado. Todo-o-nada: valida antes de escribir nada; si uno falla,
+    NO se persiste ninguno. Devuelve [{"id","tipo","url_relativa"}, ...].
+
+    Extraído de subir_media (comportamiento observable idéntico) para reutilizarlo
+    también en el inicio de sesión. Lanza `solicitud_invalida` con los MISMOS
+    códigos (tipo_no_permitido / tamano_excedido)."""
+    # 1) VALIDAR TODOS antes de guardar nada (para no dejar media a medias).
     validados = []  # [(archivo, tipo, ext), ...]
     for f in archivos:
         ext = _extension(f.name)
@@ -450,9 +463,7 @@ def subir_media(request, evento_id):
                 libro_novedades=evento, tipo=tipo, path=path,
             )
             creados.append({"id": media.id, "tipo": media.tipo, "url_relativa": default_storage.url(path)})
-
-    log.info("media_subida evento=%s sub=%s archivos=%s", evento.id, sub, len(creados))
-    return Response(creados, status=status.HTTP_201_CREATED)
+    return creados
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +517,70 @@ def enroll_dispositivo(request):
             "device_token": token,         # show-once: NO se vuelve a poder recuperar
             "dispositivo_id": dispositivo.id,
             "instalacion": {"id": instalacion.id, "nombre": instalacion.nombre},
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sesión de turno: inicio (la app lo llama al loguearse el guardia).
+# Registra sesion_inicio en libro_novedades. Identidad del guardia del token;
+# instalación del dispositivo (X-Device-Token obligatorio). Fotos OPCIONALES.
+# ---------------------------------------------------------------------------
+_MAX_FOTOS_SESION = 2
+
+
+@api_view(["POST"])
+@authentication_classes([DeviceTokenAuthentication, KeycloakJWTAuthentication])
+def sesion_inicio(request):
+    """POST /api/sesion/inicio — registra el inicio de turno del guardia.
+
+    multipart/form-data. Campos: `fotos` (0..2, OPCIONALES), `texto` (opcional).
+    Sin GPS. El guardia sale del token; la instalación, del dispositivo.
+
+    - Sin X-Device-Token (o dispositivo inválido) -> 400 dispositivo_requerido.
+    - >2 fotos -> 400. Foto inválida (tipo/tamaño) -> 400 SIN registrar nada
+      (todo-o-nada: el evento y sus medios viven en una sola transacción).
+    - OK -> 201 con id, tipo_evento, instalacion_id, hora (HH:MM:SS) y fotos[].
+    """
+    dispositivo = getattr(request, "dispositivo", None)
+    if dispositivo is None:
+        raise solicitud_invalida("Falta el dispositivo (X-Device-Token).", "dispositivo_requerido")
+
+    fotos = request.FILES.getlist("fotos")
+    if len(fotos) > _MAX_FOTOS_SESION:
+        raise solicitud_invalida(
+            f"Máximo {_MAX_FOTOS_SESION} imágenes en el inicio de sesión.", "demasiadas_fotos"
+        )
+
+    texto = (request.data.get("texto") or "").strip() or None
+    ahora = timezone.now()  # hora REAL del servidor (Santiago vía timezone)
+
+    # Todo-o-nada: si una foto es inválida, guardar_media lanza y la transacción
+    # revierte también el evento recién creado (no queda un sesion_inicio suelto).
+    with transaction.atomic():
+        res = registrar_evento_simple(
+            instalacion_id=dispositivo.instalacion_id,   # del dispositivo, NUNCA del body
+            guardia_keycloak_id=request.sub_con_guiones,  # del token, CON guiones
+            codigo_tipo="sesion_inicio",
+            dispositivo_id=dispositivo.id,
+            texto=texto,
+            ahora=ahora,
+        )
+        if res["resultado"] == "catalogo_incompleto":
+            raise catalogo_no_disponible()
+
+        evento = LibroNovedades.objects.get(id=res["libro_id"])
+        medios = guardar_media(evento, fotos) if fotos else []
+
+    log.info("sesion_inicio evento=%s dispositivo=%s fotos=%s", res["libro_id"], dispositivo.id, len(medios))
+    return Response(
+        {
+            "id": res["libro_id"],
+            "tipo_evento": "sesion_inicio",
+            "instalacion_id": dispositivo.instalacion_id,
+            "hora": timezone.localtime(ahora).strftime("%H:%M:%S"),
+            "fotos": [{"id": m["id"], "url_relativa": m["url_relativa"]} for m in medios],
         },
         status=status.HTTP_201_CREATED,
     )

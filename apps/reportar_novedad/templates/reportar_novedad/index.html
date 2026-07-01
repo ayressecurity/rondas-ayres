@@ -126,13 +126,9 @@
 
     btnTomar.addEventListener("click", tomarFoto);
 
-    form.addEventListener("submit", function (e) {
-        if (fotos.length === 0) {
-            e.preventDefault();
-            mostrarError("Toma al menos una foto antes de guardar.");
-            return;
-        }
-        campoData.value = JSON.stringify(fotos);   // se envían TODAS
+    form.addEventListener("submit", function () {
+        // Foto OPCIONAL: puede enviarse vacío (se reporta solo con texto).
+        campoData.value = JSON.stringify(fotos);   // se envían TODAS (o ninguna)
     });
 
     iniciarCamara();
