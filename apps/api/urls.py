@@ -26,4 +26,6 @@ urlpatterns = [
     path("novedades", views.crear_novedad, name="crear_novedad"),
     # POST /api/rondas/<id>/cancelar — el guardia cancela una ronda con el motivo.
     path("rondas/<int:ronda_id>/cancelar", views.cancelar_ronda, name="cancelar_ronda"),
+    # GET /api/instalaciones — catálogo de instalaciones vigentes con su cliente.
+    path("instalaciones", views.listar_instalaciones, name="listar_instalaciones"),
 ]

@@ -40,7 +40,7 @@ from apps.api.authentication import DeviceTokenAuthentication, KeycloakJWTAuthen
 from apps.api.throttling import EnrollThrottle
 from apps.dispositivos.models import Dispositivo
 from apps.dispositivos.utils import generar_token, hash_token
-from apps.espejo.models import Instalacion
+from apps.espejo.models import Cliente, Instalacion
 from apps.api.serializers import (
     EventoCreateSerializer,
     NotificacionSerializer,
@@ -728,3 +728,44 @@ def cancelar_ronda(request, ronda_id):
         },
         status=status.HTTP_201_CREATED,
     )
+
+
+# ---------------------------------------------------------------------------
+# Catálogo de instalaciones para la app móvil: TODAS las vigentes (de todas las
+# instalaciones), con el nombre del cliente resuelto desde el espejo. Solo token
+# de guardia (Bearer); NO necesita X-Device-Token.
+# ---------------------------------------------------------------------------
+@api_view(["GET"])
+@authentication_classes([KeycloakJWTAuthentication])
+def listar_instalaciones(request):
+    """GET /api/instalaciones — instalaciones vigentes con su cliente.
+
+    Vigentes = no eliminadas (deleted_at IS NULL), mismo criterio que el
+    repositorio del espejo (apps/espejo/repositorio.py). Orden por nombre asc.
+
+    Cada item: {"id","nombre","cliente":{"id","nombre"}}; cliente = null si el
+    cliente_id no resuelve en la tabla cliente. El nombre del cliente se resuelve
+    con UN mapa batch (una sola query), sin N+1.
+    """
+    instalaciones = list(
+        Instalacion.objects
+        .filter(deleted_at__isnull=True)
+        .order_by("nombre")
+        .values("id", "nombre", "cliente_id")
+    )
+    # Mapa cliente_id -> razon_social en 1 query (sin consultar por instalación).
+    cliente_ids = {i["cliente_id"] for i in instalaciones}
+    clientes = dict(Cliente.objects.filter(id__in=cliente_ids).values_list("id", "razon_social"))
+
+    data = [
+        {
+            "id": i["id"],
+            "nombre": i["nombre"],
+            "cliente": (
+                {"id": i["cliente_id"], "nombre": clientes[i["cliente_id"]]}
+                if i["cliente_id"] in clientes else None
+            ),
+        }
+        for i in instalaciones
+    ]
+    return Response(data)

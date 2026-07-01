@@ -27,6 +27,7 @@ from rest_framework.test import APIClient
 from apps.checkpoints.models import PuntoControl
 from apps.dispositivos.models import Dispositivo
 from apps.dispositivos.utils import hash_token
+from apps.espejo.models import Cliente, Instalacion
 from apps.novedades.models import (
     CategoriaEvento,
     LibroNovedades,
@@ -1150,3 +1151,57 @@ class CancelarRondaApiTests(_JwtMixin, TestCase):
             self._url(self.ronda.id), {"texto": "x"}, format="json", HTTP_X_DEVICE_TOKEN=self.token
         )
         self.assertEqual(resp.status_code, 401)
+
+
+class InstalacionesApiTests(_JwtMixin, TestCase):
+    """GET /api/instalaciones — catálogo de instalaciones vigentes con su cliente."""
+    URL = "/api/instalaciones"
+
+    def setUp(self):
+        super().setUp()
+        # El usuario del token ya existe (evita el INSERT del alta JIT en el conteo).
+        get_user_model().objects.create(username="g", keycloak_id=UUID(SUB))
+        Cliente.objects.create(id=1, razon_social="Municipalidad X", rut="1-9")
+        Cliente.objects.create(id=2, razon_social="Municipalidad Y", rut="2-7")
+        # Nombres a propósito desordenados para verificar el orden asc por nombre.
+        Instalacion.objects.create(id=10, codigo="AYR-0010", cliente_id=1, nombre="B Puesto")
+        Instalacion.objects.create(id=11, codigo="AYR-0011", cliente_id=1, nombre="A Puesto")
+        Instalacion.objects.create(id=12, codigo="AYR-0012", cliente_id=2, nombre="C Puesto")
+        # Eliminada (soft delete): NO debe aparecer.
+        Instalacion.objects.create(
+            id=13, codigo="AYR-0013", cliente_id=1, nombre="Z Borrada", deleted_at=dj_tz.now(),
+        )
+
+    def test_lista_200_con_cliente_y_orden(self):
+        resp = self._get(self.URL)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        # 3 vigentes (la borrada no está), ordenadas por nombre asc.
+        self.assertEqual([i["nombre"] for i in data], ["A Puesto", "B Puesto", "C Puesto"])
+        item = data[0]
+        self.assertEqual(set(item.keys()), {"id", "nombre", "cliente"})
+        self.assertEqual(set(item["cliente"].keys()), {"id", "nombre"})
+
+    def test_cliente_resuelto_correctamente(self):
+        data = self._get(self.URL).json()
+        por_id = {i["id"]: i for i in data}
+        self.assertEqual(por_id[10]["cliente"], {"id": 1, "nombre": "Municipalidad X"})
+        self.assertEqual(por_id[12]["cliente"], {"id": 2, "nombre": "Municipalidad Y"})
+
+    def test_instalacion_eliminada_no_aparece(self):
+        ids = {i["id"] for i in self._get(self.URL).json()}
+        self.assertNotIn(13, ids)
+
+    def test_cliente_no_resoluble_null(self):
+        Instalacion.objects.create(id=20, codigo="AYR-0020", cliente_id=999, nombre="Sin Cliente")
+        por_id = {i["id"]: i for i in self._get(self.URL).json()}
+        self.assertIsNone(por_id[20]["cliente"])  # cliente_id inexistente -> null
+
+    def test_sin_token_401(self):
+        self.assertEqual(self.client.get(self.URL).status_code, 401)
+
+    def test_sin_n_mas_uno(self):
+        # Más instalaciones/clientes NO deben aumentar las queries (mapa batch).
+        # Fijo: 1 (usuario del token) + 1 (instalaciones) + 1 (clientes) = 3.
+        with self.assertNumQueries(3):
+            self._get(self.URL)
