@@ -370,8 +370,8 @@ class EventosApiTests(_JwtMixin, TestCase):
         self.assertEqual(ev.ronda_id, self.ronda.id)      # ronda de A...
         self.assertNotEqual(ev.ronda_id, ronda_b.id)      # ...nunca la de B
 
-    # ---- idempotencia: reintento no duplica ----
-    def test_reintento_mismo_punto_no_duplica(self):
+    # ---- re-escaneo: registra fila nueva; progreso cuenta únicos ----
+    def test_reescaneo_mismo_punto_registra_progreso_unico(self):
         cp2 = PuntoControl.objects.create(
             instalacion_id=10, nombre="Porton Sur", lat=str(self.LAT), lng=str(self.LNG),
             tolerancia_mts=30, validar_posicion=True,
@@ -381,14 +381,18 @@ class EventosApiTests(_JwtMixin, TestCase):
 
         r1 = self._post(self.URL, self._body(), sub=self.GUARDIA)
         r2 = self._post(self.URL, self._body(), sub=self.GUARDIA)
+        # Re-escaneo permitido: ambas responden 201 (arribo).
         self.assertEqual(r1.status_code, 201)
-        self.assertEqual(r2.status_code, 200)
-        self.assertTrue(r2.json()["ya_registrado"])
-        # Un único arribo para ese punto.
+        self.assertEqual(r2.status_code, 201)
+        self.assertEqual(r2.json()["tipo_evento"], "arribo")
+        # DOS filas de arribo para ese punto...
         self.assertEqual(
             LibroNovedades.objects.filter(punto_control=self.cp, tipo_evento__codigo="arribo").count(),
-            1,
+            2,
         )
+        # ...pero el progreso lo cuenta UNA vez (puntos únicos): 1 de 2.
+        self.assertEqual(r2.json()["progreso"]["escaneados"], 1)
+        self.assertEqual(r2.json()["progreso"]["total"], 2)
 
     # ---- GPS fuera de tolerancia: NO se rechaza ----
     def test_gps_fuera_de_tolerancia_201_arribo_invalido(self):
@@ -489,8 +493,8 @@ class EventosApiTests(_JwtMixin, TestCase):
         # timestamp_servidor = ahora del server; timestamp_evento = terreno (pasado).
         self.assertGreater(ev.timestamp_servidor, ev.timestamp_evento)
 
-    # ---- API: reinicio por ventana de alarma (mismo service que la web) ----
-    def test_api_reinicio_por_ventana(self):
+    # ---- API: re-escaneo registra en la misma ventana y en la siguiente ----
+    def test_api_reescaneo_en_misma_y_distinta_ventana(self):
         from apps.rondas.models import Programacion, ProgramacionHorario
 
         # Alarmas 12:00 / 14:00 en la ronda de A (instalación 10, día completo).
@@ -507,16 +511,16 @@ class EventosApiTests(_JwtMixin, TestCase):
         # así que _ronda_para_ahora —que usa la hora real— igual la encuentra).
         with patch("apps.api.views.timezone.now", return_value=momento(12, 30)):
             r1 = self._post(self.URL, self._body(), sub=self.GUARDIA)   # ventana 1
-            r2 = self._post(self.URL, self._body(), sub=self.GUARDIA)   # misma ventana
+            r2 = self._post(self.URL, self._body(), sub=self.GUARDIA)   # misma ventana: re-escaneo
         with patch("apps.api.views.timezone.now", return_value=momento(14, 30)):
-            r3 = self._post(self.URL, self._body(), sub=self.GUARDIA)   # ventana 2 (reinicio)
+            r3 = self._post(self.URL, self._body(), sub=self.GUARDIA)   # ventana 2
 
+        # Re-escaneo permitido: las TRES registran arribo (201), la ventana no bloquea.
         self.assertEqual(r1.status_code, 201)
-        self.assertEqual(r2.status_code, 200)            # bloqueado en la misma ventana
-        self.assertTrue(r2.json()["ya_registrado"])
-        self.assertEqual(r3.status_code, 201)            # permitido al cambiar de ventana
+        self.assertEqual(r2.status_code, 201)
+        self.assertEqual(r3.status_code, 201)
         self.assertEqual(
-            LibroNovedades.objects.filter(punto_control=self.cp, tipo_evento__codigo="arribo").count(), 2
+            LibroNovedades.objects.filter(punto_control=self.cp, tipo_evento__codigo="arribo").count(), 3
         )
 
     # ---- Fase 4: identidad del DISPOSITIVO (header X-Device-Token) ----

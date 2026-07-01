@@ -247,10 +247,9 @@ class ServiceRondasTests(TestCase):
         self.assertEqual(ej1.id, ej2.id)  # reusa, no crea otra
         self.assertEqual(RondaEjecucion.objects.count(), 1)
 
-    # ---- bloqueo de re-escaneo ----
-    def test_bloqueo_no_duplica_mismo_punto_en_la_ventana(self):
-        # Segundo punto para que la ronda NO se complete tras 1 escaneo
-        # (si se completara, la ejecución dejaría de estar "en curso").
+    # ---- re-escaneo: registra fila nueva, progreso cuenta únicos ----
+    def test_reescaneo_mismo_punto_registra_dos_filas_progreso_unico(self):
+        # Segundo punto para que la ronda NO se complete tras 1 escaneo.
         cp2 = PuntoControl.objects.create(
             instalacion_id=10, nombre="Porton Sur", lat=str(LAT), lng=str(LNG),
             tolerancia_mts=30, validar_posicion=True,
@@ -271,13 +270,17 @@ class ServiceRondasTests(TestCase):
             qr_token=self.cp.qr_token, lat=LAT, lng=LNG, texto=None,
             ahora=timezone.now(),
         )
+        # Re-escaneo permitido: ambas registran arribo.
         self.assertEqual(r1["resultado"], "ok")
-        self.assertEqual(r2["resultado"], "ya_escaneado")
-        # Solo UN arribo para ese punto en la ventana.
+        self.assertEqual(r2["resultado"], "ok")
+        # DOS filas de arribo para ese punto en la ventana.
         arribos = LibroNovedades.objects.filter(
             punto_control=self.cp, tipo_evento__codigo="arribo",
         ).count()
-        self.assertEqual(arribos, 1)
+        self.assertEqual(arribos, 2)
+        # ...pero el progreso lo cuenta UNA vez (puntos únicos): 1 de 2.
+        self.assertEqual(r2["progreso"]["escaneados"], 1)
+        self.assertEqual(r2["progreso"]["total"], 2)
 
 
 class VentanaAlarmaTests(TestCase):
@@ -339,13 +342,14 @@ class VentanaAlarmaTests(TestCase):
             LibroNovedades.objects.filter(punto_control=self.cp, tipo_evento__codigo="arribo").count(), 2
         )
 
-    def test_mismo_qr_misma_ventana_bloquea(self):
+    def test_mismo_qr_misma_ventana_reescanea(self):
         r1 = self._marcar(self._ahora(12, 30))
-        r2 = self._marcar(self._ahora(12, 45))   # misma ventana 1
+        r2 = self._marcar(self._ahora(12, 45))   # misma ventana 1: re-escaneo permitido
         self.assertEqual(r1["resultado"], "ok")
-        self.assertEqual(r2["resultado"], "ya_escaneado")
+        self.assertEqual(r2["resultado"], "ok")
+        # Dos filas para el mismo punto en la misma ventana (cada escaneo registra).
         self.assertEqual(
-            LibroNovedades.objects.filter(punto_control=self.cp, tipo_evento__codigo="arribo").count(), 1
+            LibroNovedades.objects.filter(punto_control=self.cp, tipo_evento__codigo="arribo").count(), 2
         )
 
     def test_conteo_por_guardia_independiente(self):
@@ -395,8 +399,8 @@ class VentanaAlarmaTests(TestCase):
         self.assertEqual(ini, self._ahora(1, 0))
         self.assertEqual(fin, self._ahora(2, 59, 59))  # siguiente alarma (03:00) − 1s
 
-    # ---- fallback: ronda SIN alarmas = una vez por turno ----
-    def test_fallback_sin_alarmas_una_vez_por_turno(self):
+    # ---- fallback: ronda SIN alarmas = ventana de turno; re-escaneo permitido ----
+    def test_fallback_sin_alarmas_reescanea_en_el_turno(self):
         ronda_fb = Ronda.objects.create(
             cliente_id=1, instalacion_id=12, nombre="Ronda Día",
             fecha_inicio=date(2026, 1, 1),
@@ -408,11 +412,14 @@ class VentanaAlarmaTests(TestCase):
             qr_token="eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", activo=True,
         )
         RondaSecuencia.objects.create(ronda=ronda_fb, punto_control=cp_fb, orden=1)
-        # Sin programacion -> ventana = turno completo. Dos marcas en horas
-        # distintas del MISMO turno -> la segunda se bloquea (una vez por turno).
+        # Sin programacion -> ventana = turno completo. Dos marcas del MISMO punto
+        # en el mismo turno: ambas registran (re-escaneo permitido dentro de la ventana).
         r1 = registrar_escaneo(instalacion_id=12, guardia_keycloak_id=GUARDIA,
                                qr_token=cp_fb.qr_token, lat=LAT, lng=LNG, texto=None, ahora=self._ahora(12, 0))
         r2 = registrar_escaneo(instalacion_id=12, guardia_keycloak_id=GUARDIA,
                                qr_token=cp_fb.qr_token, lat=LAT, lng=LNG, texto=None, ahora=self._ahora(16, 0))
         self.assertEqual(r1["resultado"], "ok")
-        self.assertEqual(r2["resultado"], "ya_escaneado")
+        self.assertEqual(r2["resultado"], "ok")
+        self.assertEqual(
+            LibroNovedades.objects.filter(punto_control=cp_fb, tipo_evento__codigo="arribo").count(), 2
+        )

@@ -343,8 +343,12 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
       - "sin_ronda_activa": no hay ninguna ronda activa cuyo horario contenga la
         hora actual en esa instalación; NO se registra nada. -> error claro.
       - "catalogo_incompleto": falta el catálogo (corre seed_tipos_evento). -> 500.
-      - "ya_escaneado": el guardia ya registró ese punto en esa ronda+ventana.
-      - "ok": arribo registrado; incluye progreso y completada si hay ejecución.
+      - "sin_ventana_activa": la hora cae fuera de toda ventana de alarma (antes de
+        la primera o en un hueco); NO se registra nada. -> error claro.
+      - "ok": arribo registrado; incluye progreso y completada si hay ejecución. Se
+        registra SIEMPRE que haya ventana activa, incluso si el punto ya se marcó en
+        esa ventana (re-escaneo permitido: cada escaneo = una fila nueva). El
+        progreso cuenta puntos ÚNICOS, así que re-escanear no lo infla.
 
     Se devuelven dicts (no se lanza excepción) en codigo_no_existe para que el
     INSERT de ese evento SE CONFIRME (igual que la versión anterior, que escribía
@@ -394,32 +398,17 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
 
         # Ventana de marcaje vigente: la de la ALARMA actual (o el turno completo
         # si la ronda no tiene alarmas). Si estamos fuera de toda ventana (antes
-        # de la primera alarma o en un hueco) -> no se registra.
+        # de la primera alarma o en un hueco) -> no se registra. Esta validación
+        # de ventana SE MANTIENE: el re-escaneo solo aplica DENTRO de una ventana.
         ventana = _ventana_alarma(ronda_actual, ahora)
         if ventana is SIN_VENTANA:
             return {"resultado": "sin_ventana_activa", "punto_nombre": cp.nombre}
 
-        # Bloqueo de re-escaneo POR GUARDIA + RONDA + PUNTO + VENTANA: si ESTE
-        # guardia ya registró ESTE punto, para ESTA ronda, DENTRO de la ventana
-        # de alarma vigente, no se registra de nuevo (solo se avisa). Al entrar la
-        # siguiente alarma cambia la ventana y el QR se "reinicia".
-        if LibroNovedades.objects.filter(
-            ronda_id=ronda_actual.id,
-            guardia_keycloak_id=guardia_keycloak_id,
-            punto_control=cp,
-            timestamp_servidor__gte=ventana[0],
-            timestamp_servidor__lte=ventana[1],
-        ).exists():
-            estado = _estado_ejecucion(ronda_actual.id, guardia_keycloak_id, ventana)
-            return {
-                "resultado": "ya_escaneado",
-                "checkpoint": cp.nombre,
-                "progreso": {
-                    "escaneados": estado["escaneados"],
-                    "total": estado["total"],
-                    "puntos": estado["puntos"],
-                },
-            }
+        # RE-ESCANEO PERMITIDO: aunque ESTE guardia ya haya marcado ESTE punto en
+        # la ventana vigente, se registra igual (cada escaneo = una fila nueva). El
+        # caso real: el SSPP pide una vuelta extra fuera del ciclo normal. El
+        # progreso NO se infla porque _estado_ejecucion cuenta PUNTOS ÚNICOS
+        # (set() de punto_control_id), así que re-escanear un punto no lo suma dos veces.
 
         # Distancia del celular al punto (siempre, para auditoría). Acotada al
         # máximo del campo (decimal 7,2 -> 99999.99 m) por seguridad.
