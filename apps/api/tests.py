@@ -939,3 +939,96 @@ class SesionApiTests(_JwtMixin, TestCase):
     def test_inicio_sin_token_401(self):
         resp = self.client.post(self.URL, {}, format="multipart", HTTP_X_DEVICE_TOKEN=self.token)
         self.assertEqual(resp.status_code, 401)
+
+
+@override_settings(MEDIA_ROOT=_MEDIA_TMP)
+class NovedadApiTests(_JwtMixin, TestCase):
+    """POST /api/novedades — novedad desde el móvil: texto OBLIGATORIO, fotos opcionales."""
+    URL = "/api/novedades"
+    SUB = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+    def setUp(self):
+        super().setUp()
+        call_command("seed_tipos_evento")  # necesita 'novedad' en el catálogo
+        self.token = "dev-novedad"
+        self.disp = Dispositivo.objects.create(
+            instalacion_id=41, token_hash=hash_token(self.token), activo=True,
+        )
+
+    def _foto(self, nombre="foto.jpg", contenido=b"datos-jpeg"):
+        return SimpleUploadedFile(nombre, contenido, content_type="image/jpeg")
+
+    def _post(self, texto="Portón forzado", fotos=None, sub=None, device=True):
+        cuerpo = {}
+        if texto is not None:
+            cuerpo["texto"] = texto
+        if fotos:
+            cuerpo["fotos"] = fotos
+        extra = {"HTTP_AUTHORIZATION": f"Bearer {self._token(_claims(sub=sub or self.SUB))}"}
+        if device:
+            extra["HTTP_X_DEVICE_TOKEN"] = self.token
+        return self.client.post(self.URL, cuerpo, format="multipart", **extra)
+
+    def test_novedad_solo_texto_201(self):
+        resp = self._post()
+        self.assertEqual(resp.status_code, 201)
+        data = resp.json()
+        self.assertEqual(data["tipo_evento"], "novedad")
+        self.assertEqual(data["instalacion_id"], 41)
+        self.assertEqual(data["fotos"], [])
+        ev = LibroNovedades.objects.get(id=data["id"])
+        self.assertEqual(ev.tipo_evento.codigo, "novedad")
+        self.assertEqual(ev.instalacion_id, 41)               # del dispositivo
+        self.assertEqual(ev.guardia_keycloak_id, self.SUB)    # del token, CON guiones
+        self.assertEqual(ev.dispositivo_id, self.disp.id)
+        self.assertEqual(ev.texto, "Portón forzado")
+        self.assertIsNone(ev.punto_control_id)                # evento simple: sin punto/ronda
+        self.assertIsNone(ev.ronda_id)
+
+    def test_novedad_con_una_foto_201(self):
+        resp = self._post(fotos=[self._foto()])
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(len(resp.json()["fotos"]), 1)
+        self.assertEqual(
+            LibroNovedadesMedia.objects.filter(libro_novedades_id=resp.json()["id"]).count(), 1
+        )
+
+    def test_novedad_con_dos_fotos_201(self):
+        resp = self._post(fotos=[self._foto("a.jpg"), self._foto("b.png", b"datos-png")])
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(len(resp.json()["fotos"]), 2)
+
+    def test_novedad_sin_texto_400(self):
+        antes = LibroNovedades.objects.count()
+        resp = self._post(texto="   ")  # solo espacios -> vacío
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["mensaje"], "La observación es obligatoria.")
+        self.assertEqual(LibroNovedades.objects.count(), antes)
+
+    def test_novedad_con_tres_fotos_400(self):
+        antes = LibroNovedades.objects.count()
+        resp = self._post(fotos=[self._foto("a.jpg"), self._foto("b.jpg"), self._foto("c.jpg")])
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["codigo"], "solicitud_invalida")
+        self.assertEqual(LibroNovedades.objects.count(), antes)
+
+    def test_novedad_foto_invalida_400_sin_crear_evento(self):
+        antes = LibroNovedades.objects.count()
+        malo = SimpleUploadedFile("virus.exe", b"MZ", content_type="application/octet-stream")
+        resp = self._post(fotos=[malo])
+        self.assertEqual(resp.status_code, 400)
+        # todo-o-nada: no se creó el evento ni media.
+        self.assertEqual(LibroNovedades.objects.count(), antes)
+        self.assertEqual(LibroNovedadesMedia.objects.count(), 0)
+
+    def test_novedad_sin_device_400(self):
+        resp = self._post(device=False)
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["mensaje"], "Falta el dispositivo (X-Device-Token).")
+        self.assertEqual(LibroNovedades.objects.count(), 0)
+
+    def test_novedad_sin_token_401(self):
+        resp = self.client.post(
+            self.URL, {"texto": "x"}, format="multipart", HTTP_X_DEVICE_TOKEN=self.token
+        )
+        self.assertEqual(resp.status_code, 401)

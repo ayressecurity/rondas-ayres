@@ -584,3 +584,67 @@ def sesion_inicio(request):
         },
         status=status.HTTP_201_CREATED,
     )
+
+
+# ---------------------------------------------------------------------------
+# Novedad desde el móvil: como "Reportar novedad" de la web, pero por la app.
+# Sin QR/punto/ronda: solo observación (texto OBLIGATORIO) + fotos OPCIONALES.
+# Guardia del token; instalación del dispositivo (X-Device-Token obligatorio).
+# ---------------------------------------------------------------------------
+@api_view(["POST"])
+@authentication_classes([DeviceTokenAuthentication, KeycloakJWTAuthentication])
+def crear_novedad(request):
+    """POST /api/novedades — registra una novedad (tipo_evento 'novedad').
+
+    multipart/form-data. Campos: `texto` (OBLIGATORIO), `fotos` (0..2, OPCIONALES).
+
+    - Sin X-Device-Token (o dispositivo inválido) -> 400 dispositivo_requerido.
+    - `texto` vacío/ausente -> 400 (la observación es obligatoria).
+    - >2 fotos o foto inválida (tipo/tamaño) -> 400 SIN registrar nada
+      (todo-o-nada: evento + medios en una sola transacción).
+    - OK -> 201 con id, tipo_evento, instalacion_id, hora (HH:MM:SS) y fotos[].
+    """
+    dispositivo = getattr(request, "dispositivo", None)
+    if dispositivo is None:
+        raise solicitud_invalida("Falta el dispositivo (X-Device-Token).", "dispositivo_requerido")
+
+    texto = (request.data.get("texto") or "").strip()
+    if not texto:
+        raise solicitud_invalida("La observación es obligatoria.", "texto_requerido")
+
+    fotos = request.FILES.getlist("fotos")
+    if len(fotos) > _MAX_FOTOS_SESION:
+        raise solicitud_invalida(
+            f"Máximo {_MAX_FOTOS_SESION} imágenes por novedad.", "demasiadas_fotos"
+        )
+
+    ahora = timezone.now()  # hora REAL del servidor (Santiago vía timezone)
+
+    # Todo-o-nada: si una foto es inválida, guardar_media lanza y la transacción
+    # revierte también el evento recién creado.
+    with transaction.atomic():
+        res = registrar_evento_simple(
+            instalacion_id=dispositivo.instalacion_id,   # del dispositivo, NUNCA del body
+            guardia_keycloak_id=request.sub_con_guiones,  # del token, CON guiones
+            codigo_tipo="novedad",
+            dispositivo_id=dispositivo.id,
+            texto=texto,
+            ahora=ahora,
+        )
+        if res["resultado"] == "catalogo_incompleto":
+            raise catalogo_no_disponible()
+
+        evento = LibroNovedades.objects.get(id=res["libro_id"])
+        medios = guardar_media(evento, fotos) if fotos else []
+
+    log.info("novedad_movil evento=%s dispositivo=%s fotos=%s", res["libro_id"], dispositivo.id, len(medios))
+    return Response(
+        {
+            "id": res["libro_id"],
+            "tipo_evento": "novedad",
+            "instalacion_id": dispositivo.instalacion_id,
+            "hora": timezone.localtime(ahora).strftime("%H:%M:%S"),
+            "fotos": [{"id": m["id"], "url_relativa": m["url_relativa"]} for m in medios],
+        },
+        status=status.HTTP_201_CREATED,
+    )
