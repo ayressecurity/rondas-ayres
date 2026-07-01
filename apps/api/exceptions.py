@@ -10,7 +10,12 @@ Nunca se filtran trazas ni detalles internos al cliente. El detalle técnico
 """
 import logging
 
-from rest_framework.exceptions import APIException, NotAuthenticated, NotFound
+from rest_framework.exceptions import (
+    APIException,
+    NotAuthenticated,
+    NotFound,
+    PermissionDenied,
+)
 from rest_framework.response import Response
 
 log = logging.getLogger("apps.api")
@@ -30,6 +35,16 @@ def solicitud_invalida(mensaje, motivo="solicitud_invalida"):
     """APIException 400 con mensaje claro y motivo para el log."""
     exc = APIException(mensaje)
     exc.status_code = 400
+    exc.motivo = motivo
+    return exc
+
+
+def sin_permiso(mensaje="No tienes permiso para ver este recurso.", motivo="sin_permiso"):
+    """PermissionDenied (-> 403) con mensaje claro y motivo para el log.
+
+    Para endpoints que exigen un rol concreto (p.ej. sspp/super_admin): el usuario
+    está autenticado (token válido) pero NO autorizado. 403, no 401."""
+    exc = PermissionDenied(mensaje)
     exc.motivo = motivo
     return exc
 

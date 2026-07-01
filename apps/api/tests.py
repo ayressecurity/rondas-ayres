@@ -1205,3 +1205,119 @@ class InstalacionesApiTests(_JwtMixin, TestCase):
         # Fijo: 1 (usuario del token) + 1 (instalaciones) + 1 (clientes) = 3.
         with self.assertNumQueries(3):
             self._get(self.URL)
+
+
+class ResumenInstalacionApiTests(_JwtMixin, TestCase):
+    """GET /api/instalaciones/<id>/resumen — resumen SSPP (cliente + rondas + checkpoints).
+
+    Solo sspp/super_admin (rol del token). Reutiliza ventanas_de_alarma (como
+    GET /api/rondas?mias) para las horas de alarma; aquí sin estado temporal.
+    """
+    URL_4 = "/api/instalaciones/4/resumen"
+
+    def setUp(self):
+        super().setUp()
+        # Usuario del token pre-creado (evita el INSERT del alta JIT en el conteo N+1).
+        get_user_model().objects.create(username="sspp", keycloak_id=UUID(SUB))
+        Cliente.objects.create(id=1, razon_social="Municipalidad X", rut="1-9")
+        # Instalación 4: 2 checkpoints ACTIVOS (+1 inactivo que NO cuenta) y 2 rondas.
+        Instalacion.objects.create(id=4, codigo="AYR-0004", cliente_id=1, nombre="Puesto Central")
+        for i, activo in enumerate((True, True, False), start=1):
+            PuntoControl.objects.create(
+                instalacion_id=4, nombre=f"Punto {i}",
+                lat="-33.4", lng="-70.56", tolerancia_mts=30, validar_posicion=True,
+                qr_token=f"44444444-4444-4444-4444-00000000000{i}", activo=activo,
+            )
+        # Ronda Día 08:00-20:00 con 3 alarmas (08:00, 11:00, 14:00).
+        self.dia = Ronda.objects.create(
+            cliente_id=1, instalacion_id=4, nombre="Ronda Día",
+            fecha_inicio=date(2026, 1, 1), hora_inicio=dtime(8, 0), hora_fin=dtime(20, 0),
+        )
+        prog_dia = Programacion.objects.create(ronda=self.dia, repite="todos_los_dias", activo=True)
+        for orden, h in enumerate((8, 11, 14), start=1):
+            ProgramacionHorario.objects.create(programacion=prog_dia, hora=h, minuto=0, orden=orden)
+        # Ronda Noche 20:00-06:00 (cruza medianoche) con 2 alarmas (22:00, 02:00).
+        self.noche = Ronda.objects.create(
+            cliente_id=1, instalacion_id=4, nombre="Ronda Noche",
+            fecha_inicio=date(2026, 1, 1), hora_inicio=dtime(20, 0), hora_fin=dtime(6, 0),
+        )
+        prog_noche = Programacion.objects.create(ronda=self.noche, repite="todos_los_dias", activo=True)
+        for orden, (h, m) in enumerate(((22, 0), (2, 0)), start=1):
+            ProgramacionHorario.objects.create(programacion=prog_noche, hora=h, minuto=m, orden=orden)
+
+    def _get_rol(self, url, roles):
+        """GET con el token trayendo `roles` en realm_access.roles (como el resto del proyecto)."""
+        claims = _claims(realm_access={"roles": roles})
+        return self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {self._token(claims)}")
+
+    def test_sspp_200_dia_y_noche(self):
+        resp = self._get_rol(self.URL_4, ["sspp"])
+        self.assertEqual(resp.status_code, 200)
+        d = resp.json()
+        self.assertEqual(d["instalacion"], {"id": 4, "nombre": "Puesto Central"})
+        self.assertEqual(d["cliente"], {"id": 1, "nombre": "Municipalidad X"})
+        self.assertEqual(d["checkpoints_total"], 2)  # el inactivo no cuenta
+        # Rondas ordenadas por nombre: "Ronda Día" < "Ronda Noche".
+        self.assertEqual([r["nombre"] for r in d["rondas"]], ["Ronda Día", "Ronda Noche"])
+        dia, noche = d["rondas"]
+        self.assertEqual(dia["hora_inicio"], "08:00")
+        self.assertEqual(dia["hora_fin"], "20:00")
+        self.assertFalse(dia["cruza_medianoche"])
+        self.assertEqual(dia["total_vueltas"], 3)
+        self.assertEqual(dia["horarios"], ["08:00", "11:00", "14:00"])
+        self.assertEqual(noche["hora_inicio"], "20:00")
+        self.assertEqual(noche["hora_fin"], "06:00")
+        self.assertTrue(noche["cruza_medianoche"])   # 20:00 > 06:00
+        self.assertEqual(noche["total_vueltas"], 2)
+        # Ordenadas por la línea de tiempo del turno: 22:00 (mismo día) antes que 02:00 (madrugada).
+        self.assertEqual(noche["horarios"], ["22:00", "02:00"])
+
+    def test_super_admin_200(self):
+        self.assertEqual(self._get_rol(self.URL_4, ["super_admin"]).status_code, 200)
+
+    def test_sin_rol_sspp_ni_super_admin_403(self):
+        resp = self._get_rol(self.URL_4, ["guardia"])
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["error"]["codigo"], "sin_permiso")
+
+    def test_instalacion_inexistente_404(self):
+        resp = self._get_rol("/api/instalaciones/999/resumen", ["sspp"])
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.json()["error"]["codigo"], "no_encontrado")
+
+    def test_instalacion_eliminada_404(self):
+        Instalacion.objects.create(
+            id=7, codigo="AYR-0007", cliente_id=1, nombre="Borrada", deleted_at=dj_tz.now(),
+        )
+        self.assertEqual(self._get_rol("/api/instalaciones/7/resumen", ["sspp"]).status_code, 404)
+
+    def test_sin_token_401(self):
+        self.assertEqual(self.client.get(self.URL_4).status_code, 401)
+
+    def test_instalacion_sin_rondas_lista_vacia(self):
+        Instalacion.objects.create(id=5, codigo="AYR-0005", cliente_id=1, nombre="Sin Rondas")
+        d = self._get_rol("/api/instalaciones/5/resumen", ["sspp"]).json()
+        self.assertEqual(d["rondas"], [])
+        self.assertEqual(d["checkpoints_total"], 0)
+
+    def test_ronda_sin_programacion_total_cero(self):
+        Instalacion.objects.create(id=6, codigo="AYR-0006", cliente_id=1, nombre="Solo Ronda")
+        Ronda.objects.create(
+            cliente_id=1, instalacion_id=6, nombre="Ronda Simple",
+            fecha_inicio=date(2026, 1, 1), hora_inicio=dtime(8, 0), hora_fin=dtime(20, 0),
+        )
+        r = self._get_rol("/api/instalaciones/6/resumen", ["sspp"]).json()["rondas"][0]
+        self.assertEqual(r["total_vueltas"], 0)
+        self.assertEqual(r["horarios"], [])
+
+    def test_cliente_no_resoluble_null(self):
+        Instalacion.objects.create(id=8, codigo="AYR-0008", cliente_id=999, nombre="Sin Cliente")
+        d = self._get_rol("/api/instalaciones/8/resumen", ["sspp"]).json()
+        self.assertIsNone(d["cliente"])   # cliente_id inexistente -> null
+
+    def test_sin_n_mas_uno(self):
+        # Con 2 rondas programadas, las queries son CONSTANTES (no escalan por ronda):
+        # 1 usuario + 1 instalación + 1 cliente + 1 checkpoints + 1 rondas
+        # + 1 programaciones + 1 horarios = 7 (prefetch, sin N+1).
+        with self.assertNumQueries(7):
+            self._get_rol(self.URL_4, ["sspp"])

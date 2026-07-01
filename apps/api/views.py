@@ -34,6 +34,7 @@ from rest_framework.response import Response
 from apps.api.exceptions import (
     catalogo_no_disponible,
     no_encontrado,
+    sin_permiso,
     solicitud_invalida,
 )
 from apps.api.authentication import DeviceTokenAuthentication, KeycloakJWTAuthentication
@@ -53,6 +54,7 @@ from apps.comun.services.rondas import (
     iniciar_o_reusar_ejecucion,
     registrar_escaneo,
     registrar_evento_simple,
+    ventanas_de_alarma,
 )
 from apps.cuentas.identidad import norm_keycloak_id
 from apps.novedades.models import LibroNovedades, LibroNovedadesMedia, TipoMedia
@@ -769,3 +771,114 @@ def listar_instalaciones(request):
         for i in instalaciones
     ]
     return Response(data)
+
+
+# ---------------------------------------------------------------------------
+# Resumen de una instalación para la vista SSPP de la app: cliente + rondas (con
+# turno y horas de alarma) + total de checkpoints. Solo rol sspp / super_admin.
+# ---------------------------------------------------------------------------
+def _prefetch_programacion():
+    """Prefetch de la programación ACTIVA + sus horarios ordenados.
+
+    Es la MISMA parte de programación que _prefetch_rondas, pero SIN la secuencia
+    (el resumen no la usa): constante respecto al nº de rondas (sin N+1)."""
+    return Prefetch(
+        "programacion_set",
+        queryset=Programacion.objects.filter(activo=True).prefetch_related(
+            Prefetch("programacionhorario_set", queryset=ProgramacionHorario.objects.order_by("orden"))
+        ),
+    )
+
+
+def _resumen_ronda(ronda, ahora):
+    """Resumen simple de una ronda: turno (HH:MM), cruce de medianoche y las horas
+    de alarma de la programación activa.
+
+    REUTILIZA `ventanas_de_alarma` (la MISMA lógica que GET /api/rondas?mias) sobre
+    los horarios YA prefetcheados, para no reconsultar ni reinventar el anclaje de
+    alarmas / cruce de medianoche. Aquí NO se calcula estado temporal ni
+    vuelta_actual: es solo informativo (horas + total de vueltas)."""
+    # Aplana los ProgramacionHorario de las programaciones ACTIVAS ya prefetcheadas
+    # (igual que RondaSerializer._horarios_precargados; sin tocar la BD).
+    horarios = [
+        h
+        for prog in ronda.programacion_set.all()        # prefetch: solo activo=True
+        for h in prog.programacionhorario_set.all()     # prefetch: order_by('orden')
+    ]
+    ventanas = ventanas_de_alarma(ronda, ahora, horarios=horarios)
+    # Cada ventana la abre una alarma (ProgramacionHorario); su hora en HH:MM,
+    # ordenadas por la propia ventana (línea de tiempo del turno).
+    horas = [f"{h.hora:02d}:{h.minuto:02d}" for (h, _ini, _fin) in ventanas]
+
+    hi, hf = ronda.hora_inicio, ronda.hora_fin
+    return {
+        "id": ronda.id,
+        "nombre": ronda.nombre,
+        "hora_inicio": hi.strftime("%H:%M") if hi else None,
+        "hora_fin": hf.strftime("%H:%M") if hf else None,
+        "cruza_medianoche": bool(hi and hf and hi > hf),  # el turno cruza medianoche
+        "total_vueltas": len(ventanas),                   # nº de alarmas activas (0 si no tiene)
+        "horarios": horas,
+    }
+
+
+@api_view(["GET"])
+@authentication_classes([KeycloakJWTAuthentication])
+def resumen_instalacion(request, instalacion_id):
+    """GET /api/instalaciones/<id>/resumen — resumen para la vista SSPP de la app.
+
+    Solo rol sspp / super_admin (roles del token, realm_access.roles). El resto:
+    403. Sin Bearer: 401. Instalación inexistente o eliminada (deleted_at): 404.
+
+    Devuelve el cliente (razón social del espejo), el total de checkpoints ACTIVOS
+    y las rondas ACTIVAS de la instalación, cada una con su turno (HH:MM), si cruza
+    medianoche, el total de vueltas y las horas de alarma de la programación activa.
+    Reutiliza ventanas_de_alarma (como GET /api/rondas?mias); sin estado temporal.
+    """
+    # PERMISO: la API es de guardias por defecto; este endpoint es de monitoreo,
+    # así que exige rol sspp o super_admin. Los roles salen del TOKEN (los dejó el
+    # portero en request.token_roles = realm_access.roles), nunca del body.
+    roles = getattr(request, "token_roles", []) or []
+    if "super_admin" not in roles and "sspp" not in roles:
+        raise sin_permiso()
+
+    # Instalación VIGENTE (no eliminada). Mismo criterio que el resto (deleted_at).
+    inst = (
+        Instalacion.objects
+        .filter(id=instalacion_id, deleted_at__isnull=True)
+        .values("id", "nombre", "cliente_id")
+        .first()
+    )
+    if inst is None:
+        raise no_encontrado("Instalación no encontrada.", "instalacion_no_encontrada")
+
+    # Cliente (razón social) por lookup directo del cliente_id: 1 query, sin N+1.
+    razon = (
+        Cliente.objects
+        .filter(id=inst["cliente_id"])
+        .values_list("razon_social", flat=True)
+        .first()
+    )
+    cliente = {"id": inst["cliente_id"], "nombre": razon} if razon is not None else None
+
+    # Checkpoints ACTIVOS de la instalación (conteo, no listado).
+    checkpoints_total = PuntoControl.objects.filter(
+        instalacion_id=inst["id"], activo=True
+    ).count()
+
+    # Rondas ACTIVAS + su programación activa (prefetch: sin N+1 por ronda).
+    ahora = timezone.now()  # zona Santiago (USE_TZ); ancla el turno de las alarmas
+    rondas = (
+        Ronda.objects
+        .filter(instalacion_id=inst["id"], estado=EstadoGenerico.ACTIVA)
+        .prefetch_related(_prefetch_programacion())
+        .order_by("nombre")
+    )
+    rondas_data = [_resumen_ronda(r, ahora) for r in rondas]
+
+    return Response({
+        "instalacion": {"id": inst["id"], "nombre": inst["nombre"]},
+        "cliente": cliente,
+        "checkpoints_total": checkpoints_total,
+        "rondas": rondas_data,
+    })
