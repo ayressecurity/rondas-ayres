@@ -18,6 +18,9 @@ from apps.cuentas import permisos
 MODULOS_BASE = [
     {"key": "inicio",   "label": "Inicio",   "url_name": "comun:dashboard",  "roles": [], "grupos": []},
     {"key": "clientes", "label": "Clientes", "url_name": "clientes:index",   "roles": [], "grupos": []},
+    # Página GLOBAL (no depende de instalación). Solo SSPP/super_admin (roles:["sspp"];
+    # super_admin siempre pasa por el cortocircuito de _item_visible).
+    {"key": "tiempo_real", "label": "Eventos en tiempo real", "url_name": "tiempo_real:index", "roles": ["sspp"], "grupos": []},
 ]
 
 # Solo con CLIENTE seleccionado.

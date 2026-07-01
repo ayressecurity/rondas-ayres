@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     "apps.control_vehicular",
     "apps.personas",
     "apps.dispositivos",
+    "apps.tiempo_real",
     "apps.api",
 ]
 

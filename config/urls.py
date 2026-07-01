@@ -19,6 +19,7 @@ urlpatterns = [
     path("control-vehicular/", include("apps.control_vehicular.urls")),
     path("personas/", include("apps.personas.urls")),
     path("dispositivos/", include("apps.dispositivos.urls")),
+    path("eventos-tiempo-real/", include("apps.tiempo_real.urls")),
     path("api/", include("apps.api.urls")),
     # Dashboard / home
     path("", include("apps.comun.urls")),

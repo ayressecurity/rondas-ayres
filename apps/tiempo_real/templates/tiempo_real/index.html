@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+
+{% block titulo %}Eventos en tiempo real — Rondas{% endblock %}
+
+{% block contenido %}
+<div class="modulo-cabecera">
+    <div>
+        <h1>Eventos en tiempo real</h1>
+        <p class="contexto-instalacion">Todos los eventos de todas las instalaciones · se actualiza solo cada 2s</p>
+    </div>
+</div>
+
+<style>
+    /* Fondos MUY suaves (pastel) por tipo de evento; tabla legible y agradable. */
+    .tr-tabla tr.fila-novedad        { background: #fff9db; }  /* amarillo suave */
+    .tr-tabla tr.fila-arribo         { background: #e9f7ef; }  /* verde suave */
+    .tr-tabla tr.fila-sesion-inicio  { background: #e7f5ff; }  /* celeste suave */
+    .tr-tabla tr.fila-sesion-fin     { background: #eef3ff; }  /* azul claro suave */
+    .tr-tabla tr.fila-cancelada      { background: #fdecea; }  /* rojo claro suave */
+
+    /* Destello sutil (~0.6s) en filas nuevas: un tinte que aparece y se desvanece
+       revelando el color base de la fila. No cansa la vista. */
+    @keyframes trFlash { from { background-color: #cfe8ff; } to { background-color: transparent; } }
+    .tr-tabla tr.flash { animation: trFlash 0.6s ease-out; }
+
+    .btn-fotos {
+        background: none; border: 1px solid #CC3333; color: #CC3333;
+        border-radius: 4px; padding: 2px 10px; cursor: pointer; font: inherit; font-size: .9rem;
+    }
+    .btn-fotos:hover { background: #CC3333; color: #fff; }
+
+    /* Modal de fotos on-brand, responsive. */
+    .tr-modal { position: fixed; inset: 0; z-index: 1000; }
+    .tr-modal[hidden] { display: none; }
+    .tr-modal-overlay { position: absolute; inset: 0; background: rgba(51,51,51,.6); }
+    .tr-modal-caja {
+        position: relative; max-width: 640px; width: calc(100% - 32px);
+        margin: 7vh auto 0; background: #fff; border-radius: 8px; overflow: hidden;
+        box-shadow: 0 10px 40px rgba(0,0,0,.3);
+    }
+    .tr-modal-cab {
+        display: flex; justify-content: space-between; align-items: center;
+        background: #CC3333; color: #fff; padding: 12px 16px;
+    }
+    .tr-modal-cab h2 { margin: 0; font-size: 1.05rem; }
+    .tr-modal-cerrar { background: none; border: 0; color: #fff; font-size: 1.4rem; cursor: pointer; line-height: 1; }
+    .tr-modal-sub { padding: 12px 16px 0; color: #333; }
+    .tr-modal-imgs {
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 10px; padding: 12px 16px 16px;
+    }
+    .tr-modal-imgs img { width: 100%; height: auto; border-radius: 4px; border: 1px solid #eee; }
+    .tr-sin { color: #666; padding: 18px 0; text-align: center; }
+</style>
+
+{% if filas %}
+<div class="tabla-scroll">
+    <table class="tabla-objetivos tr-tabla">
+        <thead>
+            <tr>
+                <th>Fecha/Hora</th>
+                <th>Tipo de evento</th>
+                <th>Cliente</th>
+                <th>Instalación</th>
+                <th>Punto de control</th>
+                <th>Guardia</th>
+                <th>Observación</th>
+                <th>Media</th>
+            </tr>
+        </thead>
+        <tbody id="trBody">
+            {% for ev in filas %}
+                <tr data-id="{{ ev.id }}" class="{{ ev.color }}">
+                    <td data-col="Fecha/Hora">{{ ev.fecha }}</td>
+                    <td data-col="Tipo de evento">{{ ev.tipo }}</td>
+                    <td data-col="Cliente">{{ ev.cliente }}</td>
+                    <td data-col="Instalación">{{ ev.instalacion }}</td>
+                    <td data-col="Punto de control">{{ ev.punto }}</td>
+                    <td data-col="Guardia">{{ ev.guardia }}</td>
+                    <td data-col="Observación">{{ ev.texto }}</td>
+                    <td data-col="Media">
+                        {% if ev.tiene_boton %}
+                            <button type="button" class="btn-fotos"
+                                    data-guardia="{{ ev.guardia }}" data-inst="{{ ev.instalacion }}"
+                                    data-fotos="{{ ev.fotos_json }}">Ver fotos</button>
+                        {% else %}—{% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% include "informes/_paginador.html" %}
+{% else %}
+<div class="estado-vacio">
+    <p>Aún no hay eventos registrados.</p>
+</div>
+{% endif %}
+
+{# Modal de fotos (se llena por JS al hacer clic en "Ver fotos"). #}
+<div class="tr-modal" id="fotosModal" hidden>
+    <div class="tr-modal-overlay" data-tr-cerrar></div>
+    <div class="tr-modal-caja" role="dialog" aria-modal="true" aria-labelledby="fmTitulo">
+        <div class="tr-modal-cab">
+            <h2 id="fmTitulo">Fotos del evento</h2>
+            <button type="button" class="tr-modal-cerrar" data-tr-cerrar aria-label="Cerrar">×</button>
+        </div>
+        <p class="tr-modal-sub"><strong id="fmGuardia"></strong> — <span id="fmInst"></span></p>
+        <div class="tr-modal-imgs" id="fmImgs"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    var URL_DATA = "{% url 'tiempo_real:data' %}";
+    var pagina = {{ page_obj.number|default:1 }};
+    var tbody = document.getElementById("trBody");
+    var modal = document.getElementById("fotosModal");
+    if (!tbody) { return; }
+
+    // ---- utilidades ----
+    function esc(s) {
+        return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+            return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c];
+        });
+    }
+
+    function filaHTML(ev) {
+        var media = "—";
+        if (ev.tiene_boton) {
+            media = '<button type="button" class="btn-fotos"'
+                + ' data-guardia="' + esc(ev.guardia) + '"'
+                + ' data-inst="' + esc(ev.instalacion) + '"'
+                + ' data-fotos="' + esc(JSON.stringify(ev.fotos)) + '">Ver fotos</button>';
+        }
+        // ev.color es una clase controlada por el servidor (no entra texto del usuario).
+        return '<tr data-id="' + ev.id + '" class="' + ev.color + '">'
+            + '<td data-col="Fecha/Hora">' + esc(ev.fecha) + '</td>'
+            + '<td data-col="Tipo de evento">' + esc(ev.tipo) + '</td>'
+            + '<td data-col="Cliente">' + esc(ev.cliente) + '</td>'
+            + '<td data-col="Instalación">' + esc(ev.instalacion) + '</td>'
+            + '<td data-col="Punto de control">' + esc(ev.punto) + '</td>'
+            + '<td data-col="Guardia">' + esc(ev.guardia) + '</td>'
+            + '<td data-col="Observación">' + esc(ev.texto) + '</td>'
+            + '<td data-col="Media">' + media + '</td>'
+            + '</tr>';
+    }
+
+    // Firma = ids en orden. Si no cambió, NO repintamos (evita parpadeo constante).
+    function firmaDe(tr_list) {
+        return Array.prototype.map.call(tr_list, function (tr) { return tr.getAttribute("data-id"); }).join(",");
+    }
+    var vistos = new Set(Array.prototype.map.call(
+        tbody.querySelectorAll("tr[data-id]"), function (tr) { return tr.getAttribute("data-id"); }));
+    var firma = firmaDe(tbody.querySelectorAll("tr[data-id]"));
+
+    function render(eventos) {
+        var nueva = eventos.map(function (e) { return e.id; }).join(",");
+        if (nueva === firma) { return; }   // sin cambios: no tocar el DOM
+        firma = nueva;
+        tbody.innerHTML = eventos.map(filaHTML).join("");
+        // Destello solo en filas cuyo id no habíamos visto antes.
+        var nuevosVistos = new Set();
+        eventos.forEach(function (ev) {
+            nuevosVistos.add(String(ev.id));
+            if (!vistos.has(String(ev.id))) {
+                var tr = tbody.querySelector('tr[data-id="' + ev.id + '"]');
+                if (tr) { tr.classList.add("flash"); }
+            }
+        });
+        vistos = nuevosVistos;
+    }
+
+    function refrescar() {
+        fetch(URL_DATA + "?page=" + pagina, {headers: {"X-Requested-With": "fetch"}})
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (d) { if (d && d.eventos) { render(d.eventos); } })
+            .catch(function () { /* silencioso: reintenta en el próximo tick */ });
+    }
+    // Opción B: refresca la página actual (respeta ?page=N) cada 2 segundos.
+    setInterval(refrescar, 2000);
+
+    // ---- modal de fotos (delegación: funciona tras cada re-render) ----
+    function abrirModal(guardia, inst, fotos) {
+        document.getElementById("fmGuardia").textContent = guardia || "—";
+        document.getElementById("fmInst").textContent = inst || "—";
+        var cont = document.getElementById("fmImgs");
+        cont.innerHTML = "";
+        if (fotos && fotos.length) {
+            fotos.forEach(function (url) {
+                var img = document.createElement("img");
+                img.src = url; img.alt = "Foto del evento"; img.loading = "lazy";
+                cont.appendChild(img);
+            });
+        } else {
+            cont.innerHTML = '<p class="tr-sin">El guardia no subió imagen</p>';
+        }
+        modal.hidden = false;
+    }
+    function cerrarModal() { modal.hidden = true; }
+
+    tbody.addEventListener("click", function (e) {
+        var btn = e.target.closest(".btn-fotos");
+        if (!btn) { return; }
+        var fotos = [];
+        try { fotos = JSON.parse(btn.getAttribute("data-fotos") || "[]"); } catch (err) { fotos = []; }
+        abrirModal(btn.getAttribute("data-guardia"), btn.getAttribute("data-inst"), fotos);
+    });
+    modal.querySelectorAll("[data-tr-cerrar]").forEach(function (el) {
+        el.addEventListener("click", cerrarModal);
+    });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape") { cerrarModal(); } });
+})();
+</script>
+{% endblock %}
