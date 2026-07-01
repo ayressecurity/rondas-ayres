@@ -61,6 +61,10 @@ class LibroNovedades(models.Model):
     dentro_geocerca = models.BooleanField(null=True, blank=True)
     estado = models.CharField(max_length=10, choices=EstadoEvento.choices, default=EstadoEvento.OK)
     texto = models.TextField(null=True, blank=True)
+    # Comentario que escribe la Central de Monitoreo sobre un evento. Nullable y
+    # editable; NULL por defecto en todo evento (existente y nuevo). NO lo tocan
+    # los flujos de inserción (registrar_escaneo / registrar_evento_simple).
+    comentario_central = models.TextField(null=True, blank=True)
 
     class Meta:
         db_table = "libro_novedades"

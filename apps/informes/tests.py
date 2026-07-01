@@ -6,7 +6,7 @@ e INVISIBLE: se aplica solo cuando no hay año ni rango. Si el usuario usa año 
 rango, ese filtro manda y "hoy" NO interviene.
 """
 from django.contrib.auth import get_user_model
-from django.test import Client, RequestFactory, TestCase
+from django.test import Client, RequestFactory, TestCase, override_settings
 from django.utils import timezone
 
 from apps.informes.base import _rango_y_label
@@ -92,3 +92,125 @@ class ExportExcelSaneoTests(TestCase):
         resp = self.client.get("/informes/rondas/excel/")
         self.assertEqual(resp.status_code, 200)
         self.assertIn("spreadsheetml", resp["Content-Type"])
+
+
+@override_settings(STORAGES={
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+})
+class ComentarioCentralInformesTests(TestCase):
+    """Columna 'Comentario' (comentario_central) en ambos informes: pantalla y Excel.
+
+    El campo es de solo-lectura para los informes: se muestra tal cual está en el
+    evento (lo escribe la Central de Monitoreo). NULL -> '—' en pantalla / '' en Excel.
+    """
+
+    def setUp(self):
+        self.user = get_user_model().objects.create(username="u")
+        self.client = Client()
+        self.client.force_login(self.user)
+        s = self.client.session
+        s["cliente_id"] = 1
+        s["instalacion_id"] = 10
+        s["instalacion_nombre"] = "Inst"
+        s.save()
+
+    def _evento(self, tipo, **extra):
+        # timestamp_evento = ahora -> cae en el default "hoy" del informe.
+        ahora = timezone.now()
+        return LibroNovedades.objects.create(
+            instalacion_id=10, guardia_keycloak_id="x", tipo_evento=tipo,
+            timestamp_evento=ahora, timestamp_servidor=ahora, estado="ok", **extra,
+        )
+
+    # ---- pantalla ----
+    def test_comentario_en_informe_rondas(self):
+        # 'arribo' es categoría RONDA -> aparece en el Informe de Rondas.
+        tipo = TipoEvento.objects.create(codigo="arribo", nombre="Arribo", categoria=CategoriaEvento.RONDA)
+        self._evento(tipo, texto="obs", comentario_central="Revisar cámara 3")
+        resp = self.client.get("/informes/rondas/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "<th>Comentario</th>")
+        self.assertContains(resp, "Revisar cámara 3")
+
+    def test_comentario_en_informe_novedades(self):
+        # 'novedad' es categoría NOVEDAD -> aparece en el Informe de Novedades.
+        tipo = TipoEvento.objects.create(codigo="novedad", nombre="Novedad", categoria=CategoriaEvento.NOVEDAD)
+        self._evento(tipo, texto="obs", comentario_central="Comentario central X")
+        resp = self.client.get("/informes/novedades/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "<th>Comentario</th>")
+        self.assertContains(resp, "Comentario central X")
+
+    def test_sin_comentario_muestra_guion(self):
+        # comentario_central NULL -> la celda existe con '—' (no rompe la fila).
+        tipo = TipoEvento.objects.create(codigo="arribo", nombre="Arribo", categoria=CategoriaEvento.RONDA)
+        self._evento(tipo, texto="obs")
+        resp = self.client.get("/informes/rondas/")
+        self.assertContains(resp, 'data-col="Comentario">—')
+
+    # ---- Excel ----
+    def _valores_excel(self, resp):
+        from io import BytesIO
+        from openpyxl import load_workbook
+        wb = load_workbook(BytesIO(resp.content))
+        return {c.value for row in wb.active.iter_rows() for c in row}
+
+    def test_comentario_en_excel_rondas(self):
+        tipo = TipoEvento.objects.create(codigo="arribo", nombre="Arribo", categoria=CategoriaEvento.RONDA)
+        self._evento(tipo, texto="obs", comentario_central="ComentarioExcelR")
+        resp = self.client.get("/informes/rondas/excel/")
+        self.assertEqual(resp.status_code, 200)
+        valores = self._valores_excel(resp)
+        self.assertIn("Comentario", valores)        # encabezado nuevo
+        self.assertIn("ComentarioExcelR", valores)  # valor de la fila
+
+    def test_comentario_en_excel_novedades(self):
+        tipo = TipoEvento.objects.create(codigo="novedad", nombre="Novedad", categoria=CategoriaEvento.NOVEDAD)
+        self._evento(tipo, texto="obs", comentario_central="ComentarioExcelN")
+        resp = self.client.get("/informes/novedades/excel/")
+        self.assertEqual(resp.status_code, 200)
+        valores = self._valores_excel(resp)
+        self.assertIn("Comentario", valores)
+        self.assertIn("ComentarioExcelN", valores)
+
+
+class InsercionNoTocaComentarioTests(TestCase):
+    """Los flujos de inserción NO setean comentario_central: queda NULL (sin tocarse)."""
+
+    def test_registrar_evento_simple_deja_comentario_null(self):
+        from apps.comun.services.rondas import registrar_evento_simple
+        TipoEvento.objects.create(codigo="novedad", nombre="Novedad", categoria=CategoriaEvento.NOVEDAD)
+        res = registrar_evento_simple(
+            instalacion_id=10, guardia_keycloak_id="x", codigo_tipo="novedad",
+            texto="obs", ahora=timezone.now(),
+        )
+        ev = LibroNovedades.objects.get(id=res["libro_id"])
+        self.assertIsNone(ev.comentario_central)
+
+    def test_registrar_escaneo_deja_comentario_null(self):
+        from datetime import date, time as dtime
+
+        from apps.checkpoints.models import PuntoControl
+        from apps.comun.services.rondas import registrar_escaneo
+        from apps.rondas.models import Ronda
+
+        TipoEvento.objects.create(codigo="arribo", nombre="Arribo", categoria=CategoriaEvento.RONDA)
+        cp = PuntoControl.objects.create(
+            instalacion_id=10, nombre="P", lat="-33.4", lng="-70.56",
+            tolerancia_mts=100, validar_posicion=True,
+            qr_token="cccccccc-cccc-cccc-cccc-cccccccccccc", activo=True,
+        )
+        # Ronda activa todo el día (contiene "ahora") y sin programación -> ventana
+        # = turno completo; el escaneo dentro de tolerancia registra un 'arribo'.
+        Ronda.objects.create(
+            cliente_id=1, instalacion_id=10, nombre="R", fecha_inicio=date(2026, 1, 1),
+            hora_inicio=dtime(0, 0), hora_fin=dtime(23, 59, 59),
+        )
+        res = registrar_escaneo(
+            instalacion_id=10, guardia_keycloak_id="x", qr_token=cp.qr_token,
+            lat=-33.4, lng=-70.56, texto=None, ahora=timezone.now(),
+        )
+        self.assertEqual(res["resultado"], "ok")
+        ev = LibroNovedades.objects.get(id=res["libro_id"])
+        self.assertIsNone(ev.comentario_central)

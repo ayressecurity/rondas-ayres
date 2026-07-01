@@ -24,6 +24,7 @@
             <tr>
                 <th>Fecha/Hora</th>
                 <th>Observación</th>
+                <th>Comentario</th>
                 <th>Tipo de evento</th>
                 <th>Guardia</th>
                 <th>Imagen</th>
@@ -35,6 +36,7 @@
                     {# date: convierte el datetime aware a la zona activa (Santiago), sin decimales. #}
                     <td data-col="Fecha/Hora">{{ ev.timestamp_evento|date:"Y-m-d H:i:s" }}</td>
                     <td data-col="Observación">{{ ev.texto|default:"—" }}</td>
+                    <td data-col="Comentario">{{ ev.comentario_central|default:"—" }}</td>
                     <td data-col="Tipo de evento">{{ ev.tipo_evento.nombre }}</td>
                     <td data-col="Guardia">{{ ev.guardia_nombre }}</td>
                     <td data-col="Imagen">

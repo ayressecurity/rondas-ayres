@@ -80,6 +80,7 @@ COLUMNAS = [
     ("Distancia (m)", 14),
     ("Geocerca", 12),
     ("Observación", 40),
+    ("Comentario", 40),
 ]
 
 
@@ -147,6 +148,8 @@ def _exportar_excel(request, *, titulo, aplica_filtro, slug_base):
                 value=float(ev.distancia_metros) if ev.distancia_metros is not None else "—")
         ws.cell(row=fila, column=7, value=_geocerca_texto(ev))
         ws.cell(row=fila, column=8, value=_limpiar_celda(ev.texto or "—"))
+        # Comentario de la Central: vacío ("") si no hay (no "—", para el Excel).
+        ws.cell(row=fila, column=9, value=_limpiar_celda(ev.comentario_central or ""))
         fila += 1
 
     ws.freeze_panes = "A3"  # fija título + encabezado al hacer scroll
@@ -175,6 +178,7 @@ def exportar_rondas(request):
 COLUMNAS_NOVEDAD = [
     ("Fecha/Hora", 20),
     ("Observación", 45),
+    ("Comentario", 45),
     ("Tipo de evento", 20),
     ("Guardia", 24),
 ]
@@ -249,8 +253,10 @@ def exportar_novedades(request):
         ws.cell(row=fila, column=1,
                 value=timezone.localtime(ev.timestamp_evento).strftime("%Y-%m-%d %H:%M:%S"))
         ws.cell(row=fila, column=2, value=_limpiar_celda(ev.texto or "—"))
-        ws.cell(row=fila, column=3, value=_limpiar_celda(ev.tipo_evento.nombre))
-        ws.cell(row=fila, column=4, value=_limpiar_celda(ev.guardia_nombre))
+        # Comentario de la Central: vacío ("") si no hay (no "—", para el Excel).
+        ws.cell(row=fila, column=3, value=_limpiar_celda(ev.comentario_central or ""))
+        ws.cell(row=fila, column=4, value=_limpiar_celda(ev.tipo_evento.nombre))
+        ws.cell(row=fila, column=5, value=_limpiar_celda(ev.guardia_nombre))
 
         paths = fotos.get(ev.id, [])
         if paths:

@@ -30,6 +30,7 @@
                 <th>Coordenadas</th>
                 <th>Distancia</th>
                 <th>Observación</th>
+                <th>Comentario</th>
             </tr>
         </thead>
         <tbody>
@@ -67,6 +68,7 @@
                         {% else %}—{% endif %}
                     </td>
                     <td data-col="Observación">{{ ev.texto|default:"—" }}</td>
+                    <td data-col="Comentario">{{ ev.comentario_central|default:"—" }}</td>
                 </tr>
             {% endfor %}
         </tbody>

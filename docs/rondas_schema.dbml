@@ -260,6 +260,7 @@ Table libro_novedades {
   dentro_geocerca tinyint
   estado varchar(10) [not null]
   texto text
+  comentario_central text [note: 'comentario de la Central de Monitoreo; nullable; editable']
   indexes {
     (instalacion_id, timestamp_evento)
     guardia_keycloak_id
