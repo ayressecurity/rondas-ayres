@@ -10,6 +10,7 @@ Aislamiento por guardia: los listados "?mias" se filtran SIEMPRE por el
 keycloak_id del token; nunca devuelven datos de otro guardia.
 """
 import logging
+from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 
 from django.conf import settings
@@ -530,6 +531,18 @@ def enroll_dispositivo(request):
 _MAX_FOTOS_SESION = 2
 
 
+def _coord_opcional(valor):
+    """lat/lng OPCIONAL del form-data: Decimal (precisión completa) si es numérico;
+    None si falta o no es numérico. NO rechaza: el GPS es opcional, un valor
+    vacío/malformado se trata como ausente para no bloquear al guardia."""
+    if valor is None or str(valor).strip() == "":
+        return None
+    try:
+        return Decimal(str(valor).strip())
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
 @api_view(["POST"])
 @authentication_classes([DeviceTokenAuthentication, KeycloakJWTAuthentication])
 def sesion_inicio(request):
@@ -554,6 +567,9 @@ def sesion_inicio(request):
         )
 
     texto = (request.data.get("texto") or "").strip() or None
+    # GPS OPCIONAL: si no viene o es inválido, quedan null (no bloquea el inicio).
+    lat = _coord_opcional(request.data.get("lat"))
+    lng = _coord_opcional(request.data.get("lng"))
     ahora = timezone.now()  # hora REAL del servidor (Santiago vía timezone)
 
     # Todo-o-nada: si una foto es inválida, guardar_media lanza y la transacción
@@ -565,6 +581,8 @@ def sesion_inicio(request):
             codigo_tipo="sesion_inicio",
             dispositivo_id=dispositivo.id,
             texto=texto,
+            lat=lat,
+            lng=lng,
             ahora=ahora,
         )
         if res["resultado"] == "catalogo_incompleto":
@@ -580,6 +598,8 @@ def sesion_inicio(request):
             "tipo_evento": "sesion_inicio",
             "instalacion_id": dispositivo.instalacion_id,
             "hora": timezone.localtime(ahora).strftime("%H:%M:%S"),
+            "lat": lat,
+            "lng": lng,
             "fotos": [{"id": m["id"], "url_relativa": m["url_relativa"]} for m in medios],
         },
         status=status.HTTP_201_CREATED,
@@ -645,6 +665,66 @@ def crear_novedad(request):
             "instalacion_id": dispositivo.instalacion_id,
             "hora": timezone.localtime(ahora).strftime("%H:%M:%S"),
             "fotos": [{"id": m["id"], "url_relativa": m["url_relativa"]} for m in medios],
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Cancelar ronda: el guardia cancela desde la app una ronda que no puede hacer,
+# con el motivo. Registra ronda_cancelada. Sin foto, sin GPS. Guardia del token;
+# instalación del dispositivo; la ronda debe pertenecer a esa instalación.
+# ---------------------------------------------------------------------------
+@api_view(["POST"])
+@authentication_classes([DeviceTokenAuthentication, KeycloakJWTAuthentication])
+def cancelar_ronda(request, ronda_id):
+    """POST /api/rondas/<ronda_id>/cancelar — registra la cancelación de una ronda.
+
+    Campos: `texto` (observación OBLIGATORIA). Sin foto, sin GPS.
+
+    - Sin X-Device-Token (o dispositivo inválido) -> 400 dispositivo_requerido.
+    - Observación vacía/ausente -> 400.
+    - La ronda debe existir y ser de la instalación del dispositivo; si no ->
+      404 (mismo aislamiento que el resto: no se cancelan rondas ajenas).
+    - OK -> 201 con id, tipo_evento, instalacion_id, ronda_id, hora, observacion.
+    """
+    dispositivo = getattr(request, "dispositivo", None)
+    if dispositivo is None:
+        raise solicitud_invalida("Falta el dispositivo (X-Device-Token).", "dispositivo_requerido")
+
+    observacion = (request.data.get("texto") or "").strip()
+    if not observacion:
+        raise solicitud_invalida(
+            "La observación es obligatoria para cancelar una ronda.", "observacion_requerida"
+        )
+
+    # Aislamiento: la ronda debe existir Y ser de la instalación del dispositivo.
+    ronda = Ronda.objects.filter(id=ronda_id, instalacion_id=dispositivo.instalacion_id).first()
+    if ronda is None:
+        raise no_encontrado("Ronda no encontrada.", "ronda_no_encontrada")
+
+    ahora = timezone.now()  # hora REAL del servidor (Santiago vía timezone)
+    res = registrar_evento_simple(
+        instalacion_id=dispositivo.instalacion_id,   # del dispositivo, NUNCA del body
+        guardia_keycloak_id=request.sub_con_guiones,  # del token, CON guiones
+        codigo_tipo="ronda_cancelada",
+        dispositivo_id=dispositivo.id,
+        texto=observacion,
+        ahora=ahora,
+        ronda_id=ronda.id,                            # deja constancia de QUÉ ronda
+    )
+    if res["resultado"] == "catalogo_incompleto":
+        raise catalogo_no_disponible()
+
+    log.info("ronda_cancelada evento=%s ronda=%s dispositivo=%s", res["libro_id"], ronda.id, dispositivo.id)
+    return Response(
+        {
+            "id": res["libro_id"],
+            "tipo_evento": "ronda_cancelada",
+            "instalacion_id": dispositivo.instalacion_id,
+            "ronda_id": ronda.id,
+            "hora": timezone.localtime(ahora).strftime("%H:%M:%S"),
+            "observacion": observacion,
         },
         status=status.HTTP_201_CREATED,
     )

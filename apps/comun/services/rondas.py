@@ -486,17 +486,20 @@ def registrar_escaneo(*, instalacion_id, guardia_keycloak_id, qr_token, lat, lng
 
 def registrar_evento_simple(*, instalacion_id, guardia_keycloak_id, codigo_tipo,
                             dispositivo_id=None, lat=None, lng=None, texto=None,
-                            ahora, timestamp_evento=None, estado="ok"):
-    """Registra un evento SIMPLE en libro_novedades (SIN punto_control ni ronda).
+                            ahora, timestamp_evento=None, estado="ok", ronda_id=None):
+    """Registra un evento SIMPLE en libro_novedades (SIN punto_control).
 
-    Para eventos que no son arribos de ronda: sesión (sesion_inicio/sesion_fin) y
-    otros de dispositivo. Reusa el MISMO patrón de INSERT que la rama
-    `codigo_no_existe` de registrar_escaneo, pero como helper reutilizable — NO
-    toca registrar_escaneo ni el flujo de marcaje.
+    Para eventos que no son arribos de ronda: sesión (sesion_inicio/sesion_fin),
+    novedades del móvil, cancelación de ronda y otros de dispositivo. Reusa el
+    MISMO patrón de INSERT que la rama `codigo_no_existe` de registrar_escaneo,
+    pero como helper reutilizable — NO toca registrar_escaneo ni el marcaje.
 
     - Resuelve tipo_evento por `codigo_tipo`; si falta -> {"resultado":"catalogo_incompleto"}
       (el adaptador lo traduce a 503, igual que el resto).
     - `guardia_keycloak_id` se escribe TAL CUAL (CON guiones), como en todo el service.
+    - `ronda_id` (opcional, default None): deja constancia de a QUÉ ronda refiere el
+      evento (p.ej. ronda_cancelada). None -> NULL; retrocompatible con los
+      llamadores que no lo pasan (sesión/novedad).
     - Devuelve {"resultado":"ok","libro_id":id,"tipo_evento":codigo_tipo}.
     """
     tipo = TipoEvento.objects.filter(codigo=codigo_tipo).first()
@@ -505,6 +508,7 @@ def registrar_evento_simple(*, instalacion_id, guardia_keycloak_id, codigo_tipo,
 
     evento = LibroNovedades.objects.create(
         instalacion_id=instalacion_id,
+        ronda_id=ronda_id,
         guardia_keycloak_id=guardia_keycloak_id,
         dispositivo_id=dispositivo_id,
         tipo_evento=tipo,

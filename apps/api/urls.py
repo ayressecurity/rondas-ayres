@@ -24,4 +24,6 @@ urlpatterns = [
     path("sesion/inicio", views.sesion_inicio, name="sesion_inicio"),
     # POST /api/novedades — novedad desde el móvil (observación + fotos opcionales).
     path("novedades", views.crear_novedad, name="crear_novedad"),
+    # POST /api/rondas/<id>/cancelar — el guardia cancela una ronda con el motivo.
+    path("rondas/<int:ronda_id>/cancelar", views.cancelar_ronda, name="cancelar_ronda"),
 ]

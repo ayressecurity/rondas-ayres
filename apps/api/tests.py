@@ -876,16 +876,46 @@ class SesionApiTests(_JwtMixin, TestCase):
     def _foto(self, nombre="foto.jpg", contenido=b"datos-jpeg"):
         return SimpleUploadedFile(nombre, contenido, content_type="image/jpeg")
 
-    def _post(self, fotos=None, sub=None, device=True, texto=None):
+    def _post(self, fotos=None, sub=None, device=True, texto=None, lat=None, lng=None):
         cuerpo = {}
         if fotos:
             cuerpo["fotos"] = fotos
         if texto is not None:
             cuerpo["texto"] = texto
+        if lat is not None:
+            cuerpo["lat"] = lat
+        if lng is not None:
+            cuerpo["lng"] = lng
         extra = {"HTTP_AUTHORIZATION": f"Bearer {self._token(_claims(sub=sub or self.SUB))}"}
         if device:
             extra["HTTP_X_DEVICE_TOKEN"] = self.token
         return self.client.post(self.URL, cuerpo, format="multipart", **extra)
+
+    # ---- GPS opcional ----
+    def test_inicio_con_gps_201(self):
+        resp = self._post(lat="-33.45000000000000000", lng="-70.66000000000000000")
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(float(resp.json()["lat"]), -33.45)
+        self.assertEqual(float(resp.json()["lng"]), -70.66)
+        ev = LibroNovedades.objects.get(id=resp.json()["id"])
+        self.assertIsNotNone(ev.lat)
+        self.assertIsNotNone(ev.lng)
+
+    def test_inicio_sin_gps_queda_null_201(self):
+        resp = self._post()  # sin lat/lng
+        self.assertEqual(resp.status_code, 201)
+        self.assertIsNone(resp.json()["lat"])
+        self.assertIsNone(resp.json()["lng"])
+        ev = LibroNovedades.objects.get(id=resp.json()["id"])
+        self.assertIsNone(ev.lat)
+        self.assertIsNone(ev.lng)
+
+    def test_inicio_gps_invalido_no_rompe_201(self):
+        # GPS malformado -> se trata como ausente (null), NO se rechaza.
+        resp = self._post(lat="abc", lng="")
+        self.assertEqual(resp.status_code, 201)
+        self.assertIsNone(resp.json()["lat"])
+        self.assertIsNone(resp.json()["lng"])
 
     def test_inicio_sin_foto_201(self):
         resp = self._post()
@@ -1030,5 +1060,89 @@ class NovedadApiTests(_JwtMixin, TestCase):
     def test_novedad_sin_token_401(self):
         resp = self.client.post(
             self.URL, {"texto": "x"}, format="multipart", HTTP_X_DEVICE_TOKEN=self.token
+        )
+        self.assertEqual(resp.status_code, 401)
+
+
+class CancelarRondaApiTests(_JwtMixin, TestCase):
+    """POST /api/rondas/<id>/cancelar — cancelación con observación obligatoria."""
+    SUB = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+    def setUp(self):
+        super().setUp()
+        call_command("seed_tipos_evento")  # incluye 'ronda_cancelada'
+        self.token = "dev-cancelar"
+        self.disp = Dispositivo.objects.create(
+            instalacion_id=50, token_hash=hash_token(self.token), activo=True,
+        )
+        self.ronda = Ronda.objects.create(
+            cliente_id=1, instalacion_id=50, nombre="Ronda Día", fecha_inicio=date(2026, 1, 1),
+        )
+
+    def _url(self, ronda_id):
+        return f"/api/rondas/{ronda_id}/cancelar"
+
+    def _post(self, ronda_id=None, texto="No puedo hacerla", device=True, sub=None):
+        cuerpo = {}
+        if texto is not None:
+            cuerpo["texto"] = texto
+        extra = {"HTTP_AUTHORIZATION": f"Bearer {self._token(_claims(sub=sub or self.SUB))}"}
+        if device:
+            extra["HTTP_X_DEVICE_TOKEN"] = self.token
+        return self.client.post(self._url(ronda_id or self.ronda.id), cuerpo, format="json", **extra)
+
+    def test_tipo_ronda_cancelada_sembrado(self):
+        # Lo dejó la data migration 0003 (y el seed). Categoría 'ronda'.
+        self.assertTrue(
+            TipoEvento.objects.filter(codigo="ronda_cancelada", categoria="ronda").exists()
+        )
+
+    def test_cancelar_con_observacion_201(self):
+        resp = self._post(texto="Corte de luz, sin acceso")
+        self.assertEqual(resp.status_code, 201)
+        data = resp.json()
+        self.assertEqual(data["tipo_evento"], "ronda_cancelada")
+        self.assertEqual(data["ronda_id"], self.ronda.id)
+        self.assertEqual(data["instalacion_id"], 50)
+        self.assertEqual(data["observacion"], "Corte de luz, sin acceso")
+        ev = LibroNovedades.objects.get(id=data["id"])
+        self.assertEqual(ev.tipo_evento.codigo, "ronda_cancelada")
+        self.assertEqual(ev.ronda_id, self.ronda.id)          # constancia de QUÉ ronda
+        self.assertEqual(ev.instalacion_id, 50)               # del dispositivo
+        self.assertEqual(ev.guardia_keycloak_id, self.SUB)    # del token, CON guiones
+        self.assertEqual(ev.dispositivo_id, self.disp.id)
+        self.assertEqual(ev.texto, "Corte de luz, sin acceso")
+
+    def test_cancelar_sin_observacion_400(self):
+        antes = LibroNovedades.objects.count()
+        resp = self._post(texto="   ")  # solo espacios -> vacío
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(
+            resp.json()["error"]["mensaje"], "La observación es obligatoria para cancelar una ronda."
+        )
+        self.assertEqual(LibroNovedades.objects.count(), antes)
+
+    def test_cancelar_ronda_de_otra_instalacion_404(self):
+        ajena = Ronda.objects.create(
+            cliente_id=1, instalacion_id=999, nombre="Ajena", fecha_inicio=date(2026, 1, 1),
+        )
+        antes = LibroNovedades.objects.count()
+        resp = self._post(ronda_id=ajena.id)
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.json()["error"]["codigo"], "no_encontrado")
+        self.assertEqual(LibroNovedades.objects.count(), antes)  # no registró nada
+
+    def test_cancelar_ronda_inexistente_404(self):
+        resp = self._post(ronda_id=999999)
+        self.assertEqual(resp.status_code, 404)
+
+    def test_cancelar_sin_device_400(self):
+        resp = self._post(device=False)
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"]["mensaje"], "Falta el dispositivo (X-Device-Token).")
+
+    def test_cancelar_sin_token_401(self):
+        resp = self.client.post(
+            self._url(self.ronda.id), {"texto": "x"}, format="json", HTTP_X_DEVICE_TOKEN=self.token
         )
         self.assertEqual(resp.status_code, 401)
