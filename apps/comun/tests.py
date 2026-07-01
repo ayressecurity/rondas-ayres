@@ -7,10 +7,13 @@ el CONTRATO DE IDENTIDAD: el guardia_keycloak_id se escribe TAL CUAL (con guione
 """
 from datetime import date, datetime, time, timedelta
 
+import jwt
+from django.contrib.auth import get_user_model
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
 from django.utils import timezone
 
+from apps.comun import menu
 from apps.checkpoints.models import PuntoControl
 from apps.comun.services.rondas import (
     SIN_VENTANA,
@@ -423,3 +426,52 @@ class VentanaAlarmaTests(TestCase):
         self.assertEqual(
             LibroNovedades.objects.filter(punto_control=cp_fb, tipo_evento__codigo="arribo").count(), 2
         )
+
+
+class MenuCenapocTests(TestCase):
+    """Menú ACOTADO del rol cenapoc (Opción A): solo ve el allow-list de keys.
+    Los demás roles (sspp/guardia/super_admin) NO cambian su menú."""
+
+    def setUp(self):
+        self.rf = RequestFactory()
+        self.user = get_user_model().objects.create(username="u")
+
+    def _menu_keys(self, roles):
+        """Keys visibles del menú para un usuario con esos roles del token, con
+        cliente e instalación seleccionados (así aparecen todos los candidatos)."""
+        req = self.rf.get("/")
+        req.user = self.user
+        token = jwt.encode({"realm_access": {"roles": roles}}, "x", algorithm="HS256")
+        req.session = {"oidc_access_token": token, "cliente_id": 1, "instalacion_id": 10}
+        req.resolver_match = None  # menu_visible hace getattr(..., "view_name", None)
+        return {i["key"] for i in menu.menu_visible(req)}
+
+    def test_cenapoc_menu_es_exactamente_el_allow_list(self):
+        self.assertEqual(self._menu_keys(["cenapoc"]), menu.KEYS_CENAPOC)
+
+    def test_cenapoc_no_ve_modulos_fuera_del_allow_list(self):
+        keys = self._menu_keys(["cenapoc"])
+        for oculto in ("checkpoints", "control_vehicular", "personas", "dispositivos", "escaner"):
+            self.assertNotIn(oculto, keys)
+
+    def test_cenapoc_super_admin_no_se_acota(self):
+        # Si además es super_admin, ve todo (el acotamiento es solo si NO es super).
+        keys = self._menu_keys(["cenapoc", "super_admin"])
+        self.assertIn("checkpoints", keys)
+        self.assertIn("personas", keys)
+
+    def test_sspp_menu_no_cambia(self):
+        # sspp NO se acota: sigue viendo lo de siempre (incl. checkpoints, dispositivos)
+        # y ahora también la Central (tiempo_real, que suma el rol sspp/cenapoc).
+        keys = self._menu_keys(["sspp"])
+        self.assertIn("checkpoints", keys)
+        self.assertIn("dispositivos", keys)
+        self.assertIn("tiempo_real", keys)
+
+    def test_guardia_menu_no_cambia(self):
+        # Un rol común ve los módulos abiertos (roles []), NO la Central ni dispositivos.
+        keys = self._menu_keys(["guardia"])
+        self.assertIn("checkpoints", keys)
+        self.assertIn("informe_rondas", keys)
+        self.assertNotIn("tiempo_real", keys)   # requiere sspp/cenapoc
+        self.assertNotIn("dispositivos", keys)  # requiere sspp

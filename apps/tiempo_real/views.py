@@ -21,6 +21,7 @@ from django.core.paginator import Paginator
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
 from django.utils import timezone
+from django.views.decorators.http import require_POST
 
 from apps.cuentas import permisos
 from apps.cuentas.identidad import norm_keycloak_id as _norm
@@ -44,14 +45,26 @@ COLOR_POR_CODIGO = {
 
 
 def solo_sspp(view):
-    """Restringe a SSPP / super_admin (mismo criterio que el módulo Dispositivos)."""
+    """Restringe VER la Central a SSPP / cenapoc / super_admin.
+
+    Ver la tabla ≠ poder comentar: sspp y cenapoc ven la tabla; solo cenapoc y
+    super_admin pueden comentar (puede_comentar)."""
     @wraps(view)
     def _wrapped(request, *args, **kwargs):
-        if not (permisos.es_super_admin(request) or "sspp" in permisos.roles_de(request)):
-            messages.error(request, "Acceso restringido a SSPP y super administradores.")
+        if not (permisos.es_super_admin(request)
+                or {"sspp", "cenapoc"} & set(permisos.roles_de(request))):
+            messages.error(request, "Acceso restringido a SSPP, cenapoc y super administradores.")
             return redirect("comun:dashboard")
         return view(request, *args, **kwargs)
     return _wrapped
+
+
+def puede_comentar(request):
+    """True si el usuario puede AGREGAR/EDITAR el comentario de la Central.
+
+    Solo cenapoc y super_admin (NO sspp). Se valida en el servidor (endpoint 403)
+    y decide si se pinta el botón de la columna Acción; no basta ocultar el botón."""
+    return permisos.es_super_admin(request) or "cenapoc" in permisos.roles_de(request)
 
 
 def _pagina(request):
@@ -105,6 +118,7 @@ def _filas(page_obj):
         # Botón de fotos si el evento tiene imágenes, o si es sesion_inicio (que
         # abre el modal con "sin imagen" cuando el guardia no subió foto).
         tiene_boton = bool(fotos) or codigo == "sesion_inicio"
+        comentario = ev.comentario_central or ""
         filas.append({
             "id": ev.id,
             "fecha": timezone.localtime(ev.timestamp_evento).strftime("%d-%m-%Y %H:%M:%S"),
@@ -119,6 +133,9 @@ def _filas(page_obj):
             "tiene_boton": tiene_boton,
             "fotos": fotos,
             "fotos_json": json.dumps(fotos),  # para el atributo data-* del template
+            # Comentario de la Central (3.2): el campo ya viene en ev (sin queries extra).
+            "comentario_central": comentario,
+            "tiene_comentario": bool(comentario),
         })
     return filas
 
@@ -132,6 +149,9 @@ def index(request):
         "filas": _filas(page_obj),
         "page_obj": page_obj,
         "query_sin_page": "",  # el paginador compartido lo espera
+        # Flag para pintar (o no) el botón de la columna Acción; el permiso real se
+        # revalida SIEMPRE en el servidor (endpoint comentar).
+        "puede_comentar": puede_comentar(request),
     })
 
 
@@ -146,4 +166,41 @@ def data(request):
         "num_pages": page_obj.paginator.num_pages,
         "has_previous": page_obj.has_previous(),
         "has_next": page_obj.has_next(),
+        # El JS usa este flag para decidir si pinta el botón tras cada refresco.
+        "puede_comentar": puede_comentar(request),
+    })
+
+
+@login_required
+@require_POST
+def comentar(request):
+    """POST tiempo_real:comentar — guarda/edita el comentario_central de un evento.
+
+    Solo cenapoc / super_admin (puede_comentar); si no -> 403 JSON. Recibe `id`
+    (libro_novedades.id) y `comentario` (texto). Texto vacío -> NULL (borra el
+    comentario); con contenido -> se guarda tal cual (sobrescribible/editable).
+    NO toca ningún flujo de inserción: solo UPDATE de esta columna."""
+    if not puede_comentar(request):
+        return JsonResponse(
+            {"error": "No tienes permiso para comentar."}, status=403
+        )
+
+    try:
+        libro_id = int(request.POST.get("id") or 0)
+    except (TypeError, ValueError):
+        libro_id = 0
+    if libro_id <= 0:
+        return JsonResponse({"error": "Evento inválido."}, status=400)
+
+    # Vacío -> None (permite borrar el comentario); con contenido -> tal cual.
+    texto = (request.POST.get("comentario") or "").strip() or None
+
+    actualizados = LibroNovedades.objects.filter(id=libro_id).update(comentario_central=texto)
+    if not actualizados:
+        return JsonResponse({"error": "Evento no encontrado."}, status=404)
+
+    return JsonResponse({
+        "id": libro_id,
+        "comentario_central": texto or "",
+        "tiene_comentario": bool(texto),
     })

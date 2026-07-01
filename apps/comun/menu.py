@@ -18,10 +18,19 @@ from apps.cuentas import permisos
 MODULOS_BASE = [
     {"key": "inicio",   "label": "Inicio",   "url_name": "comun:dashboard",  "roles": [], "grupos": []},
     {"key": "clientes", "label": "Clientes", "url_name": "clientes:index",   "roles": [], "grupos": []},
-    # Página GLOBAL (no depende de instalación). Solo SSPP/super_admin (roles:["sspp"];
-    # super_admin siempre pasa por el cortocircuito de _item_visible).
-    {"key": "tiempo_real", "label": "Eventos en tiempo real", "url_name": "tiempo_real:index", "roles": ["sspp"], "grupos": []},
+    # Página GLOBAL (no depende de instalación). La ven SSPP y cenapoc (y super_admin
+    # por el cortocircuito de _item_visible). key/url_name se conservan; solo cambia
+    # el label visible a "Central de monitoreo".
+    {"key": "tiempo_real", "label": "Central de monitoreo", "url_name": "tiempo_real:index", "roles": ["sspp", "cenapoc"], "grupos": []},
 ]
+
+# Allow-list del rol 'cenapoc' (Opción A): un cenapoc que NO sea super_admin ve
+# SOLO estos módulos (por key). Así no ve Puntos de control, Control vehicular,
+# Personas, etc. Para sumar el módulo futuro de cenapoc: agregar su key aquí.
+KEYS_CENAPOC = {
+    "inicio", "clientes", "instalaciones",
+    "informe_rondas", "informe_novedades", "tiempo_real",
+}
 
 # Solo con CLIENTE seleccionado.
 MODULO_INSTALACIONES = {
@@ -72,6 +81,11 @@ def menu_visible(request):
         candidatos.append(MODULO_INSTALACIONES)
     if request.session.get("instalacion_id"):
         candidatos += MODULOS_INSTALACION
+
+    # Menú ACOTADO de cenapoc (Opción A): si es cenapoc y NO super_admin, solo ve
+    # las keys del allow-list. Localizado aquí; no afecta a los demás roles.
+    if not es_super and "cenapoc" in roles_usuario:
+        candidatos = [c for c in candidatos if c["key"] in KEYS_CENAPOC]
 
     actual = getattr(request.resolver_match, "view_name", None)
 

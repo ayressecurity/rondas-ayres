@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 
-{% block titulo %}Eventos en tiempo real — Rondas{% endblock %}
+{% block titulo %}Central de monitoreo — Rondas{% endblock %}
 
 {% block contenido %}
 <div class="modulo-cabecera">
     <div>
-        <h1>Eventos en tiempo real</h1>
+        <h1>Central de monitoreo</h1>
     </div>
 </div>
 
@@ -67,6 +67,24 @@
         .tr-modal-imgs.dos img { max-height: 34vh; flex: 1 1 100%; } /* móvil: apiladas y acotadas */
     }
     .tr-sin { color: #666; padding: 18px 0; text-align: center; width: 100%; }
+
+    /* --- Columna Acción + modal de comentario de la Central (3.2) --- */
+    .btn-comentar {
+        background: none; border: 1px solid #CC3333; color: #CC3333;
+        border-radius: 4px; padding: 2px 10px; cursor: pointer; font: inherit; font-size: .9rem;
+        white-space: nowrap;
+    }
+    .btn-comentar:hover { background: #CC3333; color: #fff; }
+    .tr-modal-cuerpo { padding: 12px 16px 16px; }
+    .tr-modal-cuerpo textarea {
+        width: 100%; min-height: 120px; resize: vertical; box-sizing: border-box;
+        border: 1px solid #ccc; border-radius: 6px; padding: 8px 10px; font: inherit;
+    }
+    .tr-modal-cuerpo textarea:focus { outline: none; border-color: #CC3333; }
+    .tr-modal-pie {
+        display: flex; justify-content: flex-end; gap: 8px;
+        padding: 12px 16px 16px; flex: 0 0 auto;
+    }
 </style>
 
 {% if filas %}
@@ -82,6 +100,8 @@
                 <th>Guardia</th>
                 <th>Observación</th>
                 <th>Media</th>
+                <th>Comentario</th>
+                <th>Acción</th>
             </tr>
         </thead>
         <tbody id="trBody">
@@ -101,6 +121,16 @@
                                     data-fotos="{{ ev.fotos_json }}">Ver fotos</button>
                         {% elif ev.codigo == "novedad" or ev.codigo == "sesion_inicio" %}
                             <span class="media-sin">No tiene imagen</span>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td data-col="Comentario">{{ ev.comentario_central|default:"—" }}</td>
+                    <td data-col="Acción">
+                        {% if puede_comentar %}
+                            <button type="button" class="btn-comentar"
+                                    data-id="{{ ev.id }}" data-cliente="{{ ev.cliente }}"
+                                    data-inst="{{ ev.instalacion }}" data-comentario="{{ ev.comentario_central }}">
+                                {% if ev.tiene_comentario %}Editar comentario{% else %}Agregar comentario{% endif %}
+                            </button>
                         {% else %}—{% endif %}
                     </td>
                 </tr>
@@ -128,13 +158,38 @@
         <div class="tr-modal-imgs" id="fmImgs"></div>
     </div>
 </div>
+
+{# Modal de comentario de la Central (solo se abre si el usuario puede comentar). #}
+<div class="tr-modal" id="comentarModal" hidden>
+    <div class="tr-modal-overlay" data-cm-cerrar></div>
+    <div class="tr-modal-caja" role="dialog" aria-modal="true" aria-labelledby="cmTitulo">
+        <div class="tr-modal-cab">
+            <h2 id="cmTitulo">Comentario de la central</h2>
+            <button type="button" class="tr-modal-cerrar" data-cm-cerrar aria-label="Cerrar">×</button>
+        </div>
+        <p class="tr-modal-sub"><strong id="cmCliente"></strong> — <span id="cmInst"></span></p>
+        <div class="tr-modal-cuerpo">
+            <textarea id="cmTexto" placeholder="Escribe el comentario de la central…"></textarea>
+            <p class="tr-sin" id="cmError" hidden style="color:#CC3333;padding:8px 0 0;"></p>
+        </div>
+        <div class="tr-modal-pie">
+            <button type="button" class="btn btn-secundario" data-cm-cerrar>Cancelar</button>
+            <button type="button" class="btn btn-primario" id="cmGuardar">Guardar</button>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
 (function () {
     var URL_DATA = "{% url 'tiempo_real:data' %}";
+    var URL_COMENTAR = "{% url 'tiempo_real:comentar' %}";
+    var CSRF = "{{ csrf_token }}";
     var pagina = {{ page_obj.number|default:1 }};
+    // Flag del servidor: ¿este usuario puede comentar? (el permiso REAL se revalida
+    // en el endpoint; esto solo decide si se pinta el botón). Se refresca en cada tick.
+    var puedeComentar = {{ puede_comentar|yesno:"true,false" }};
     var tbody = document.getElementById("trBody");
     var modal = document.getElementById("fotosModal");
     if (!tbody) { return; }
@@ -148,6 +203,18 @@
 
     // Puede tener foto = tipos que aceptan imagen (novedad, sesion_inicio).
     function puedeTenerFoto(codigo) { return codigo === "novedad" || codigo === "sesion_inicio"; }
+
+    // Celda "Acción": botón de comentar SOLO si el usuario puede; si no, guion.
+    function accionHTML(ev) {
+        if (!puedeComentar) { return "—"; }
+        var etiqueta = ev.tiene_comentario ? "Editar comentario" : "Agregar comentario";
+        return '<button type="button" class="btn-comentar"'
+            + ' data-id="' + ev.id + '"'
+            + ' data-cliente="' + esc(ev.cliente) + '"'
+            + ' data-inst="' + esc(ev.instalacion) + '"'
+            + ' data-comentario="' + esc(ev.comentario_central || "") + '">'
+            + etiqueta + '</button>';
+    }
 
     function filaHTML(ev) {
         var media;
@@ -174,6 +241,8 @@
             + '<td data-col="Guardia">' + esc(ev.guardia) + '</td>'
             + '<td data-col="Observación">' + esc(ev.texto) + '</td>'
             + '<td data-col="Media">' + media + '</td>'
+            + '<td data-col="Comentario">' + esc(ev.comentario_central || "—") + '</td>'
+            + '<td data-col="Acción">' + accionHTML(ev) + '</td>'
             + '</tr>';
     }
 
@@ -205,7 +274,11 @@
     function refrescar() {
         fetch(URL_DATA + "?page=" + pagina, {headers: {"X-Requested-With": "fetch"}})
             .then(function (r) { return r.ok ? r.json() : null; })
-            .then(function (d) { if (d && d.eventos) { render(d.eventos); } })
+            .then(function (d) {
+                if (!d) { return; }
+                if (typeof d.puede_comentar === "boolean") { puedeComentar = d.puede_comentar; }
+                if (d.eventos) { render(d.eventos); }
+            })
             .catch(function () { /* silencioso: reintenta en el próximo tick */ });
     }
     // Opción B: refresca la página actual (respeta ?page=N) cada 2 segundos.
@@ -242,7 +315,83 @@
     modal.querySelectorAll("[data-tr-cerrar]").forEach(function (el) {
         el.addEventListener("click", cerrarModal);
     });
-    document.addEventListener("keydown", function (e) { if (e.key === "Escape") { cerrarModal(); } });
+
+    // ---- modal de comentario de la Central (delegación; funciona tras re-render) ----
+    var cmModal = document.getElementById("comentarModal");
+    var cmCliente = document.getElementById("cmCliente");
+    var cmInst = document.getElementById("cmInst");
+    var cmTexto = document.getElementById("cmTexto");
+    var cmError = document.getElementById("cmError");
+    var cmGuardar = document.getElementById("cmGuardar");
+    var cmActualId = null;
+
+    function abrirComentario(id, cliente, inst, comentario) {
+        cmActualId = id;
+        cmCliente.textContent = cliente || "—";
+        cmInst.textContent = inst || "—";
+        cmTexto.value = comentario || "";
+        cmError.hidden = true; cmError.textContent = "";
+        cmGuardar.disabled = false;
+        cmModal.hidden = false;
+        cmTexto.focus();
+    }
+    function cerrarComentario() { cmModal.hidden = true; cmActualId = null; }
+
+    // Repintado OPTIMISTA: actualiza la celda Comentario y el botón (Agregar<->Editar)
+    // de la fila sin esperar el tick de 2s. El servidor ya guardó (fuente de verdad).
+    function repintarFila(id, comentario, tieneComentario) {
+        var tr = tbody.querySelector('tr[data-id="' + id + '"]');
+        if (!tr) { return; }
+        var celda = tr.querySelector('td[data-col="Comentario"]');
+        if (celda) { celda.textContent = comentario || "—"; }
+        var btn = tr.querySelector(".btn-comentar");
+        if (btn) {
+            btn.setAttribute("data-comentario", comentario || "");
+            btn.textContent = tieneComentario ? "Editar comentario" : "Agregar comentario";
+        }
+    }
+
+    function guardarComentario() {
+        if (cmActualId == null) { return; }
+        cmGuardar.disabled = true;
+        var cuerpo = "id=" + encodeURIComponent(cmActualId)
+            + "&comentario=" + encodeURIComponent(cmTexto.value);
+        fetch(URL_COMENTAR, {
+            method: "POST",
+            headers: {"X-CSRFToken": CSRF, "Content-Type": "application/x-www-form-urlencoded"},
+            body: cuerpo
+        }).then(function (r) { return r.json().then(function (d) { return {ok: r.ok, data: d}; }); })
+          .then(function (res) {
+              if (!res.ok) {
+                  cmError.textContent = (res.data && res.data.error) || "No se pudo guardar.";
+                  cmError.hidden = false; cmGuardar.disabled = false;
+                  return;
+              }
+              repintarFila(res.data.id, res.data.comentario_central, res.data.tiene_comentario);
+              cerrarComentario();
+          })
+          .catch(function () {
+              cmError.textContent = "Error de red. Intenta de nuevo.";
+              cmError.hidden = false; cmGuardar.disabled = false;
+          });
+    }
+
+    tbody.addEventListener("click", function (e) {
+        var btn = e.target.closest(".btn-comentar");
+        if (!btn) { return; }
+        abrirComentario(
+            btn.getAttribute("data-id"), btn.getAttribute("data-cliente"),
+            btn.getAttribute("data-inst"), btn.getAttribute("data-comentario")
+        );
+    });
+    cmGuardar.addEventListener("click", guardarComentario);
+    cmModal.querySelectorAll("[data-cm-cerrar]").forEach(function (el) {
+        el.addEventListener("click", cerrarComentario);
+    });
+
+    document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") { cerrarModal(); cerrarComentario(); }
+    });
 })();
 </script>
 {% endblock %}

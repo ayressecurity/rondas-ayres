@@ -50,11 +50,12 @@ class TiempoRealTests(TestCase):
         s["oidc_access_token"] = token
         s.save()
 
-    def _evento(self, tipo):
+    def _evento(self, tipo, comentario=None):
         ahora = timezone.now()
         return LibroNovedades.objects.create(
             instalacion_id=10, guardia_keycloak_id=SUB, tipo_evento=tipo,
             timestamp_evento=ahora, timestamp_servidor=ahora, estado="ok", texto="Algo",
+            comentario_central=comentario,
         )
 
     # ---- acceso ----
@@ -62,7 +63,7 @@ class TiempoRealTests(TestCase):
         # NO fijamos instalacion_id en sesión: es página global y NO debe exigirla.
         resp = self.client.get(reverse("tiempo_real:index"))
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, "Eventos en tiempo real")
+        self.assertContains(resp, "Central de monitoreo")   # renombrado (3.2)
 
     def test_index_sspp_200(self):
         self._rol(["sspp"])
@@ -119,3 +120,105 @@ class TiempoRealTests(TestCase):
         # Sin instalacion_id en sesión, el endpoint responde normal (página global).
         self._evento(self.t_novedad)
         self.assertEqual(self.client.get(reverse("tiempo_real:data")).status_code, 200)
+
+    # ---- 3.2: rol cenapoc (ver la tabla) ----
+    def test_index_cenapoc_200(self):
+        self._rol(["cenapoc"])
+        self.assertEqual(self.client.get(reverse("tiempo_real:index")).status_code, 200)
+
+    # ---- 3.2: separación ver-tabla vs poder-comentar (botón Acción) ----
+    # Discriminador robusto: el botón RENDERIZADO server-side trae los valores ya
+    # resueltos ('data-id="1" data-cliente=...'); el JS los arma por concatenación,
+    # así que esa cadena literal SOLO aparece si el servidor pintó el botón en la fila.
+    BOTON_FILA = 'data-id="1" data-cliente='
+
+    def test_boton_comentar_visible_super_admin(self):
+        self._evento(self.t_novedad)  # setUp deja super_admin
+        resp = self.client.get(reverse("tiempo_real:index"))
+        self.assertContains(resp, self.BOTON_FILA)
+        self.assertContains(resp, "var puedeComentar = true;")   # flag del JS
+
+    def test_boton_comentar_visible_cenapoc(self):
+        self._rol(["cenapoc"])
+        self._evento(self.t_novedad)
+        resp = self.client.get(reverse("tiempo_real:index"))
+        self.assertContains(resp, self.BOTON_FILA)
+        self.assertContains(resp, "var puedeComentar = true;")
+
+    def test_boton_comentar_oculto_para_sspp(self):
+        # sspp VE la tabla pero NO el botón de comentar (celda Acción = "—").
+        self._rol(["sspp"])
+        self._evento(self.t_novedad)
+        resp = self.client.get(reverse("tiempo_real:index"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, self.BOTON_FILA)             # ningún botón en la fila
+        self.assertContains(resp, "var puedeComentar = false;")  # y el JS tampoco pintará
+
+    # ---- 3.2: el JSON de data trae comentario_central + tiene_comentario + flag ----
+    def test_data_incluye_comentario_y_flag(self):
+        self._evento(self.t_novedad, comentario="Revisar cámara")
+        d = self.client.get(reverse("tiempo_real:data")).json()
+        self.assertTrue(d["puede_comentar"])          # super_admin
+        ev = d["eventos"][0]
+        self.assertEqual(ev["comentario_central"], "Revisar cámara")
+        self.assertTrue(ev["tiene_comentario"])
+
+    def test_data_puede_comentar_false_para_sspp(self):
+        self._rol(["sspp"])
+        self._evento(self.t_novedad)
+        d = self.client.get(reverse("tiempo_real:data")).json()
+        self.assertFalse(d["puede_comentar"])
+        self.assertEqual(d["eventos"][0]["comentario_central"], "")
+        self.assertFalse(d["eventos"][0]["tiene_comentario"])
+
+    # ---- 3.2: endpoint comentar ----
+    def _comentar(self, ev_id, comentario):
+        return self.client.post(
+            reverse("tiempo_real:comentar"), {"id": ev_id, "comentario": comentario}
+        )
+
+    def test_comentar_super_admin_guarda_y_edita(self):
+        ev = self._evento(self.t_novedad)
+        resp = self._comentar(ev.id, "Primer comentario")
+        self.assertEqual(resp.status_code, 200)
+        d = resp.json()
+        self.assertEqual(d["comentario_central"], "Primer comentario")
+        self.assertTrue(d["tiene_comentario"])
+        ev.refresh_from_db()
+        self.assertEqual(ev.comentario_central, "Primer comentario")
+        # Editable: un segundo POST lo sobrescribe.
+        self._comentar(ev.id, "Comentario editado")
+        ev.refresh_from_db()
+        self.assertEqual(ev.comentario_central, "Comentario editado")
+
+    def test_comentar_cenapoc_guarda(self):
+        self._rol(["cenapoc"])
+        ev = self._evento(self.t_novedad)
+        self.assertEqual(self._comentar(ev.id, "Desde cenapoc").status_code, 200)
+        ev.refresh_from_db()
+        self.assertEqual(ev.comentario_central, "Desde cenapoc")
+
+    def test_comentar_vacio_borra_a_null(self):
+        ev = self._evento(self.t_novedad, comentario="Tenía comentario")
+        resp = self._comentar(ev.id, "   ")   # solo espacios -> NULL
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.json()["tiene_comentario"])
+        ev.refresh_from_db()
+        self.assertIsNone(ev.comentario_central)
+
+    def test_comentar_sspp_403_no_guarda(self):
+        self._rol(["sspp"])
+        ev = self._evento(self.t_novedad)
+        resp = self._comentar(ev.id, "No debería guardarse")
+        self.assertEqual(resp.status_code, 403)
+        ev.refresh_from_db()
+        self.assertIsNone(ev.comentario_central)   # sin cambios
+
+    def test_comentar_evento_inexistente_404(self):
+        self.assertEqual(self._comentar(999999, "x").status_code, 404)
+
+    def test_comentar_sin_login_redirige(self):
+        self.client.logout()
+        ev = self._evento(self.t_novedad)
+        resp = self._comentar(ev.id, "x")
+        self.assertEqual(resp.status_code, 302)   # @login_required -> login
