@@ -6,51 +6,67 @@
 <div class="modulo-cabecera">
     <div>
         <h1>Eventos en tiempo real</h1>
-        <p class="contexto-instalacion">Todos los eventos de todas las instalaciones · se actualiza solo cada 2s</p>
     </div>
 </div>
 
 <style>
-    /* Fondos MUY suaves (pastel) por tipo de evento; tabla legible y agradable. */
-    .tr-tabla tr.fila-novedad        { background: #fff9db; }  /* amarillo suave */
-    .tr-tabla tr.fila-arribo         { background: #e9f7ef; }  /* verde suave */
-    .tr-tabla tr.fila-sesion-inicio  { background: #e7f5ff; }  /* celeste suave */
-    .tr-tabla tr.fila-sesion-fin     { background: #eef3ff; }  /* azul claro suave */
-    .tr-tabla tr.fila-cancelada      { background: #fdecea; }  /* rojo claro suave */
+    /* Color por tipo pintado en las CELDAS (td): así cubre el fondo del <tr> y
+       NO compite con el zebra global (.tabla-objetivos tbody tr:nth-child(even)).
+       El color sale SOLO del tipo de evento, nunca de la posición de la fila. */
+    .tr-tabla tbody td { background-color: #ffffff; }                 /* neutro: tapa el zebra */
+    .tr-tabla tbody tr.fila-novedad td        { background-color: #fff9db; }  /* amarillo suave */
+    .tr-tabla tbody tr.fila-arribo td         { background-color: #e9f7ef; }  /* verde suave */
+    .tr-tabla tbody tr.fila-sesion-inicio td  { background-color: #e7f5ff; }  /* celeste suave */
+    .tr-tabla tbody tr.fila-sesion-fin td     { background-color: #eef3ff; }  /* azul claro suave */
+    .tr-tabla tbody tr.fila-cancelada td      { background-color: #fdecea; }  /* rojo claro suave */
+    /* Hover: oscurece levemente; al salir vuelve al color del tipo. */
+    .tr-tabla tbody tr:hover td { filter: brightness(0.96); }
 
-    /* Destello sutil (~0.6s) en filas nuevas: un tinte que aparece y se desvanece
-       revelando el color base de la fila. No cansa la vista. */
-    @keyframes trFlash { from { background-color: #cfe8ff; } to { background-color: transparent; } }
-    .tr-tabla tr.flash { animation: trFlash 0.6s ease-out; }
+    /* Destello sutil (~0.6s) en filas nuevas: un tinte translúcido (box-shadow
+       inset) que aparece y se desvanece SOBRE el color del tipo, sin borrarlo. */
+    @keyframes trFlash {
+        from { box-shadow: inset 0 0 0 9999px rgba(120,180,255,.45); }
+        to   { box-shadow: inset 0 0 0 9999px rgba(120,180,255,0); }
+    }
+    .tr-tabla tbody tr.flash td { animation: trFlash 0.6s ease-out; }
 
     .btn-fotos {
         background: none; border: 1px solid #CC3333; color: #CC3333;
         border-radius: 4px; padding: 2px 10px; cursor: pointer; font: inherit; font-size: .9rem;
     }
     .btn-fotos:hover { background: #CC3333; color: #fff; }
+    .media-sin { color: #999; font-size: .85rem; }   /* "No tiene imagen" (tenue, no clickeable) */
 
-    /* Modal de fotos on-brand, responsive. */
+    /* Modal de fotos on-brand, COMPACTO (cabe en pantalla sin scroll largo). */
     .tr-modal { position: fixed; inset: 0; z-index: 1000; }
     .tr-modal[hidden] { display: none; }
     .tr-modal-overlay { position: absolute; inset: 0; background: rgba(51,51,51,.6); }
     .tr-modal-caja {
-        position: relative; max-width: 640px; width: calc(100% - 32px);
+        position: relative; display: flex; flex-direction: column;
+        max-width: 560px; width: calc(100% - 32px); max-height: 85vh;
         margin: 7vh auto 0; background: #fff; border-radius: 8px; overflow: hidden;
         box-shadow: 0 10px 40px rgba(0,0,0,.3);
     }
     .tr-modal-cab {
         display: flex; justify-content: space-between; align-items: center;
-        background: #CC3333; color: #fff; padding: 12px 16px;
+        background: #CC3333; color: #fff; padding: 12px 16px; flex: 0 0 auto;
     }
     .tr-modal-cab h2 { margin: 0; font-size: 1.05rem; }
     .tr-modal-cerrar { background: none; border: 0; color: #fff; font-size: 1.4rem; cursor: pointer; line-height: 1; }
-    .tr-modal-sub { padding: 12px 16px 0; color: #333; }
+    .tr-modal-sub { padding: 12px 16px 0; color: #333; flex: 0 0 auto; }
+    /* Área de imágenes: ocupa lo que queda del modal; las imágenes se ajustan
+       DENTRO (object-fit: contain), completas, sin desbordar. */
     .tr-modal-imgs {
-        display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-        gap: 10px; padding: 12px 16px 16px;
+        flex: 1 1 auto; min-height: 0; overflow: auto;
+        display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; align-items: center;
+        padding: 12px 16px 16px;
     }
-    .tr-modal-imgs img { width: 100%; height: auto; border-radius: 4px; border: 1px solid #eee; }
-    .tr-sin { color: #666; padding: 18px 0; text-align: center; }
+    .tr-modal-imgs img { max-width: 100%; max-height: 68vh; object-fit: contain; border-radius: 4px; border: 1px solid #eee; }
+    .tr-modal-imgs.dos img { max-height: 60vh; flex: 0 1 47%; }      /* 2 imágenes: lado a lado */
+    @media (max-width: 600px) {
+        .tr-modal-imgs.dos img { max-height: 34vh; flex: 1 1 100%; } /* móvil: apiladas y acotadas */
+    }
+    .tr-sin { color: #666; padding: 18px 0; text-align: center; width: 100%; }
 </style>
 
 {% if filas %}
@@ -79,10 +95,12 @@
                     <td data-col="Guardia">{{ ev.guardia }}</td>
                     <td data-col="Observación">{{ ev.texto }}</td>
                     <td data-col="Media">
-                        {% if ev.tiene_boton %}
+                        {% if ev.fotos %}
                             <button type="button" class="btn-fotos"
                                     data-guardia="{{ ev.guardia }}" data-inst="{{ ev.instalacion }}"
                                     data-fotos="{{ ev.fotos_json }}">Ver fotos</button>
+                        {% elif ev.codigo == "novedad" or ev.codigo == "sesion_inicio" %}
+                            <span class="media-sin">No tiene imagen</span>
                         {% else %}—{% endif %}
                     </td>
                 </tr>
@@ -128,13 +146,23 @@
         });
     }
 
+    // Puede tener foto = tipos que aceptan imagen (novedad, sesion_inicio).
+    function puedeTenerFoto(codigo) { return codigo === "novedad" || codigo === "sesion_inicio"; }
+
     function filaHTML(ev) {
-        var media = "—";
-        if (ev.tiene_boton) {
+        var media;
+        if (ev.fotos && ev.fotos.length) {
+            // Con imagen -> botón.
             media = '<button type="button" class="btn-fotos"'
                 + ' data-guardia="' + esc(ev.guardia) + '"'
                 + ' data-inst="' + esc(ev.instalacion) + '"'
                 + ' data-fotos="' + esc(JSON.stringify(ev.fotos)) + '">Ver fotos</button>';
+        } else if (puedeTenerFoto(ev.codigo)) {
+            // Podía tener pero no subió -> aviso tenue.
+            media = '<span class="media-sin">No tiene imagen</span>';
+        } else {
+            // Nunca tiene (arribo, sesion_fin, ronda_cancelada, ...) -> guion.
+            media = "—";
         }
         // ev.color es una clase controlada por el servidor (no entra texto del usuario).
         return '<tr data-id="' + ev.id + '" class="' + ev.color + '">'
@@ -189,6 +217,8 @@
         document.getElementById("fmInst").textContent = inst || "—";
         var cont = document.getElementById("fmImgs");
         cont.innerHTML = "";
+        // .dos = 2 imágenes lado a lado (en móvil se apilan acotadas por CSS).
+        cont.classList.toggle("dos", !!(fotos && fotos.length === 2));
         if (fotos && fotos.length) {
             fotos.forEach(function (url) {
                 var img = document.createElement("img");
