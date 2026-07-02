@@ -55,6 +55,9 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # Aislamiento del rol 'cliente': amarra su sesion al cliente del token (va
+    # DESPUES de Session + Authentication; usa request.session y request.user).
+    "apps.cuentas.middleware.ForzarClienteMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # Log estructurado de cada request a /api/ (sub, metodo, ruta, status, motivo).

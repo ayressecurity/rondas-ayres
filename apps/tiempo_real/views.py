@@ -45,18 +45,42 @@ COLOR_POR_CODIGO = {
 
 
 def solo_sspp(view):
-    """Restringe VER la Central a SSPP / cenapoc / super_admin.
+    """Restringe VER la Central a SSPP / cenapoc / cliente / super_admin.
 
-    Ver la tabla ≠ poder comentar: sspp y cenapoc ven la tabla; solo cenapoc y
-    super_admin pueden comentar (puede_comentar)."""
+    Ver la tabla ≠ poder comentar: sspp/cenapoc/cliente ven la tabla; solo cenapoc
+    y super_admin pueden comentar (puede_comentar). El rol 'cliente' entra PERO su
+    queryset llega SIEMPRE acotado a su cliente (_acotar_por_cliente)."""
     @wraps(view)
     def _wrapped(request, *args, **kwargs):
         if not (permisos.es_super_admin(request)
-                or {"sspp", "cenapoc"} & set(permisos.roles_de(request))):
+                or {"sspp", "cenapoc", "cliente"} & set(permisos.roles_de(request))):
             messages.error(request, "Acceso restringido a SSPP, cenapoc y super administradores.")
             return redirect("comun:dashboard")
         return view(request, *args, **kwargs)
     return _wrapped
+
+
+def _acotar_por_cliente(request, qs):
+    """Aísla la Central por cliente para el rol 'cliente' (empresa externa).
+
+    - super_admin / sspp / cenapoc: ven TODO (qs intacto).
+    - rol 'cliente' con cliente resoluble: solo eventos de instalaciones de SU
+      cliente (instalacion_id__in). Nunca los de otra empresa.
+    - rol 'cliente' SIN cliente resoluble (claim ausente/mal/cliente borrado):
+      queryset VACÍO. Jamás cae a "ver todos"."""
+    roles = set(permisos.roles_de(request))
+    if permisos.es_super_admin(request) or {"sspp", "cenapoc"} & roles:
+        return qs
+    if "cliente" in roles:
+        cid = permisos.cliente_de(request)
+        if not cid:
+            return qs.none()
+        inst_ids = list(
+            Instalacion.objects.filter(cliente_id=cid, deleted_at__isnull=True)
+            .values_list("id", flat=True)
+        )
+        return qs.filter(instalacion_id__in=inst_ids)
+    return qs
 
 
 def puede_comentar(request):
@@ -81,6 +105,9 @@ def _pagina(request):
         .select_related("tipo_evento", "punto_control")
         .order_by("-timestamp_evento", "-id")
     )
+    # Aislamiento: el rol 'cliente' solo ve su cliente; el resto (super/sspp/cenapoc)
+    # ve todo. Se acota ANTES de paginar (el filtro no cambia el orden).
+    qs = _acotar_por_cliente(request, qs)
     page_obj = Paginator(qs, POR_PAGINA).get_page(request.GET.get("page"))
     page_obj.object_list = list(page_obj.object_list)  # congela a lista estable
     return page_obj

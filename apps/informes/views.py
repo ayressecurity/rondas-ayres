@@ -17,7 +17,7 @@ from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from apps.comun.decoradores import requiere_instalacion
+from apps.comun.decoradores import instalacion_del_cliente, requiere_instalacion
 from apps.novedades.models import CategoriaEvento, LibroNovedadesMedia, TipoMedia
 from .base import eventos_filtrados, render_informe
 
@@ -43,6 +43,7 @@ def _filtro_novedades(qs):
 
 @login_required
 @requiere_instalacion
+@instalacion_del_cliente
 def informe_rondas(request):
     # con_imagen=True adjunta ev.foto_urls (1 query/página, reusa _adjuntar_fotos):
     # lo usa el modal de sesion_inicio para mostrar la foto del guardia. NO cambia
@@ -58,6 +59,7 @@ def informe_rondas(request):
 
 @login_required
 @requiere_instalacion
+@instalacion_del_cliente
 def informe_novedades(request):
     return render_informe(
         request,
@@ -167,6 +169,7 @@ def _exportar_excel(request, *, titulo, aplica_filtro, slug_base):
 
 @login_required
 @requiere_instalacion
+@instalacion_del_cliente
 def exportar_rondas(request):
     """Exporta el Informe de Rondas a .xlsx respetando instalación + fechas."""
     return _exportar_excel(
@@ -204,6 +207,7 @@ def _fotos_por_evento(eventos):
 
 @login_required
 @requiere_instalacion
+@instalacion_del_cliente
 def exportar_novedades(request):
     """Exporta el Informe de Novedades a .xlsx (respeta instalación + fechas),
     INSERTANDO las fotos reales en la columna de imágenes."""

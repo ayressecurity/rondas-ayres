@@ -21,7 +21,7 @@ MODULOS_BASE = [
     # Página GLOBAL (no depende de instalación). La ven SSPP y cenapoc (y super_admin
     # por el cortocircuito de _item_visible). key/url_name se conservan; solo cambia
     # el label visible a "Central de monitoreo".
-    {"key": "tiempo_real", "label": "Central de monitoreo", "url_name": "tiempo_real:index", "roles": ["sspp", "cenapoc"], "grupos": []},
+    {"key": "tiempo_real", "label": "Central de monitoreo", "url_name": "tiempo_real:index", "roles": ["sspp", "cenapoc", "cliente"], "grupos": []},
 ]
 
 # Allow-list del rol 'cenapoc' (Opción A): un cenapoc que NO sea super_admin ve
@@ -29,6 +29,14 @@ MODULOS_BASE = [
 # Personas, etc. Para sumar el módulo futuro de cenapoc: agregar su key aquí.
 KEYS_CENAPOC = {
     "inicio", "clientes", "instalaciones",
+    "informe_rondas", "informe_novedades", "tiempo_real",
+}
+
+# Allow-list del rol 'cliente' (empresa externa): ve SOLO su propio contexto. Sin
+# "clientes" (no elige empresa: queda amarrado a la suya por el middleware). Su
+# Central (tiempo_real) llega ya filtrada por su cliente en el backend.
+KEYS_CLIENTE = {
+    "inicio", "instalaciones",
     "informe_rondas", "informe_novedades", "tiempo_real",
 }
 
@@ -86,6 +94,9 @@ def menu_visible(request):
     # las keys del allow-list. Localizado aquí; no afecta a los demás roles.
     if not es_super and "cenapoc" in roles_usuario:
         candidatos = [c for c in candidatos if c["key"] in KEYS_CENAPOC]
+    # Menú ACOTADO del rol 'cliente' (mismo patrón): sin "clientes"; solo su contexto.
+    if not es_super and "cliente" in roles_usuario:
+        candidatos = [c for c in candidatos if c["key"] in KEYS_CLIENTE]
 
     actual = getattr(request.resolver_match, "view_name", None)
 

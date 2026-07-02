@@ -285,3 +285,80 @@ class TiempoRealTests(TestCase):
         ev = self._evento(self.t_novedad)
         resp = self._comentar(ev.id, "x")
         self.assertEqual(resp.status_code, 302)   # @login_required -> login
+
+
+@override_settings(STORAGES={
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+})
+class TiempoRealAislamientoClienteTests(TestCase):
+    """3.3a: la Central aísla por cliente. El rol 'cliente' entra PERO solo ve los
+    eventos de instalaciones de SU cliente; super/sspp/cenapoc siguen viendo todo;
+    un 'cliente' sin cliente resoluble no ve NADA (nunca cae a "ver todos")."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create(username="cli", keycloak_id=UUID(SUB))
+        self.client = Client()
+        self.client.force_login(self.user)
+        # Dos clientes, una instalación y un evento cada uno.
+        Cliente.objects.create(id=400, razon_social="Muni Las Condes", rut="400-9")
+        Cliente.objects.create(id=500, razon_social="Otro Cliente", rut="500-9")
+        Instalacion.objects.create(id=40, codigo="AYR-0040", cliente_id=400, nombre="Inst 400")
+        Instalacion.objects.create(id=50, codigo="AYR-0050", cliente_id=500, nombre="Inst 500")
+        self.t = TipoEvento.objects.create(codigo="novedad", nombre="Novedad", categoria=CategoriaEvento.NOVEDAD)
+        self.ev400 = self._evento(40)
+        self.ev500 = self._evento(50)
+
+    def _evento(self, inst_id):
+        ahora = timezone.now()
+        return LibroNovedades.objects.create(
+            instalacion_id=inst_id, guardia_keycloak_id=SUB, tipo_evento=self.t,
+            timestamp_evento=ahora, timestamp_servidor=ahora, estado="ok", texto="x",
+        )
+
+    def _rol(self, roles, cliente_id=None):
+        claims = {"realm_access": {"roles": roles}}
+        if cliente_id is not None:
+            claims["cliente_id"] = str(cliente_id)
+        s = self.client.session
+        s["oidc_access_token"] = jwt.encode(claims, "x", algorithm="HS256")
+        s.save()
+
+    def _ids_data(self):
+        return [e["id"] for e in self.client.get(reverse("tiempo_real:data")).json()["eventos"]]
+
+    def test_cliente_solo_ve_sus_eventos(self):
+        self._rol(["cliente"], cliente_id=400)
+        ids = self._ids_data()
+        self.assertIn(self.ev400.id, ids)
+        self.assertNotIn(self.ev500.id, ids)   # NO ve el de otro cliente
+
+    def test_cliente_puede_entrar_a_la_central(self):
+        self._rol(["cliente"], cliente_id=400)
+        self.assertEqual(self.client.get(reverse("tiempo_real:index")).status_code, 200)
+
+    def test_cliente_sin_cliente_id_no_ve_nada(self):
+        self._rol(["cliente"], cliente_id=None)   # claim ausente
+        self.assertEqual(self._ids_data(), [])    # vacío, nunca "todos"
+
+    def test_cliente_no_puede_comentar(self):
+        # El rol cliente ve la tabla pero NO comenta (403), ni siquiera de lo suyo.
+        self._rol(["cliente"], cliente_id=400)
+        resp = self.client.post(
+            reverse("tiempo_real:comentar"), {"id": self.ev400.id, "comentario": "x"}
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.ev400.refresh_from_db()
+        self.assertIsNone(self.ev400.comentario_central)
+
+    def test_super_admin_ve_todos(self):
+        self._rol(["super_admin"])
+        ids = self._ids_data()
+        self.assertIn(self.ev400.id, ids)
+        self.assertIn(self.ev500.id, ids)
+
+    def test_sspp_ve_todos(self):
+        self._rol(["sspp"])
+        ids = self._ids_data()
+        self.assertIn(self.ev400.id, ids)
+        self.assertIn(self.ev500.id, ids)

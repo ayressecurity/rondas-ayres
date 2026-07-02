@@ -37,3 +37,18 @@ def grupos_de(request):
 def es_super_admin(request):
     """True si el rol 'super_admin' esta presente en el token."""
     return "super_admin" in roles_de(request)
+
+
+def es_cliente(request):
+    """True si el rol 'cliente' (usuario de una empresa externa) esta en el token."""
+    return "cliente" in roles_de(request)
+
+
+def cliente_de(request):
+    """id (int) del cliente asignado al usuario en el token (claim 'cliente_id').
+
+    Keycloak lo emite como String (ej. "400"). Devuelve None si el claim esta
+    AUSENTE (super_admin/sspp/cenapoc/guardias no lo llevan) o no es numerico,
+    SIN lanzar excepcion. Nunca cae a un id por defecto."""
+    valor = _claims_de(request).get("cliente_id")
+    return int(valor) if str(valor).isdigit() else None

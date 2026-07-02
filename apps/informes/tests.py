@@ -5,10 +5,13 @@ Solo dos filtros: AÑO y RANGO (fini/ffin). El día actual es un DEFAULT AUTOMÁ
 e INVISIBLE: se aplica solo cuando no hay año ni rango. Si el usuario usa año o
 rango, ese filtro manda y "hoy" NO interviene.
 """
+import jwt
 from django.contrib.auth import get_user_model
 from django.test import Client, RequestFactory, TestCase, override_settings
+from django.urls import reverse
 from django.utils import timezone
 
+from apps.espejo.models import Cliente, Instalacion
 from apps.informes.base import _rango_y_label
 from apps.novedades.models import CategoriaEvento, LibroNovedades, TipoEvento
 
@@ -173,6 +176,51 @@ class ComentarioCentralInformesTests(TestCase):
         valores = self._valores_excel(resp)
         self.assertIn("Comentario", valores)
         self.assertIn("ComentarioExcelN", valores)
+
+
+@override_settings(STORAGES={
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+})
+class InformesAislamientoClienteTests(TestCase):
+    """3.3a (defensa en profundidad): un rol 'cliente' no ve informes de una
+    instalación de otra empresa, aunque su sesión traiga ese instalacion_id."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create(username="cli")
+        self.client = Client()
+        self.client.force_login(self.user)
+        Cliente.objects.create(id=400, razon_social="Muni Las Condes", rut="400-9")
+        Cliente.objects.create(id=500, razon_social="Otro Cliente", rut="500-9")
+        Instalacion.objects.create(id=40, codigo="AYR-0040", cliente_id=400, nombre="Propia")
+        Instalacion.objects.create(id=50, codigo="AYR-0050", cliente_id=500, nombre="Ajena")
+        token = jwt.encode(
+            {"realm_access": {"roles": ["cliente"]}, "cliente_id": "400"},
+            "x", algorithm="HS256",
+        )
+        s = self.client.session
+        s["oidc_access_token"] = token
+        s["cliente_id"] = 400
+        s.save()
+
+    def _fijar_instalacion(self, ins_id, nombre):
+        s = self.client.session
+        s["instalacion_id"] = ins_id
+        s["instalacion_nombre"] = nombre
+        s.save()
+
+    def test_instalacion_ajena_en_sesion_se_rechaza(self):
+        # Sesión manipulada: instalacion de cliente 500 mientras el token es 400.
+        self._fijar_instalacion(50, "Ajena")
+        resp = self.client.get(reverse("informes:rondas"))
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.url, reverse("instalaciones:index"))
+        self.assertNotIn("instalacion_id", self.client.session)   # descartada
+
+    def test_instalacion_propia_renderiza(self):
+        self._fijar_instalacion(40, "Propia")
+        resp = self.client.get(reverse("informes:rondas"))
+        self.assertEqual(resp.status_code, 200)
 
 
 class InsercionNoTocaComentarioTests(TestCase):

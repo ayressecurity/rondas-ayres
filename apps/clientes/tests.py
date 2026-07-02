@@ -3,6 +3,7 @@ Tests del módulo Clientes: paginación (15/página) + buscador por razón socia
 (icontains, backend) conservando el término entre páginas, sin romper la
 selección de cliente por fila.
 """
+import jwt
 from django.contrib.auth import get_user_model
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
@@ -70,3 +71,45 @@ class ClientesListadoTests(TestCase):
         resp = self.client.post(reverse("clientes:seleccionar", args=[7]))
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(self.client.session["cliente_id"], 7)
+
+
+class ClientesRolClienteBloqueadoTests(TestCase):
+    """El rol 'cliente' (empresa externa) NO gestiona clientes: no ve la lista
+    global, no puede elegir otro cliente ni limpiar el suyo (queda amarrado al del
+    token por el middleware). Los demás roles no cambian."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create(username="cli")
+        self.client = Client()
+        self.client.force_login(self.user)
+        # Su cliente (400) y otro ajeno (500), ambos vigentes en el espejo.
+        Cliente.objects.create(id=400, razon_social="Muni Las Condes", rut="400-9")
+        Cliente.objects.create(id=500, razon_social="Otro Cliente", rut="500-9")
+        self._rol_cliente(400)
+
+    def _rol_cliente(self, cliente_id):
+        token = jwt.encode(
+            {"realm_access": {"roles": ["cliente"]}, "cliente_id": str(cliente_id)},
+            "x", algorithm="HS256",
+        )
+        s = self.client.session
+        s["oidc_access_token"] = token
+        s.save()
+
+    def test_index_redirige_a_instalaciones(self):
+        resp = self.client.get(reverse("clientes:index"))
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.url, reverse("instalaciones:index"))
+
+    def test_no_puede_seleccionar_otro_cliente(self):
+        # Intenta fijar el cliente 500 por URL -> bloqueado; sigue amarrado al 400.
+        resp = self.client.post(reverse("clientes:seleccionar", args=[500]))
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.url, reverse("instalaciones:index"))
+        self.assertEqual(self.client.session["cliente_id"], 400)   # forzado por el middleware
+
+    def test_cambiar_bloqueado(self):
+        resp = self.client.get(reverse("clientes:cambiar"))
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.url, reverse("instalaciones:index"))
+        self.assertEqual(self.client.session["cliente_id"], 400)   # no se limpió
