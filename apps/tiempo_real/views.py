@@ -68,13 +68,18 @@ def puede_comentar(request):
 
 
 def _pagina(request):
-    """Página de 65 eventos (id DESC). Congela la página a lista estable (65 filas)
-    para poder resolver guardia/fotos sobre los MISMOS objetos (Paginator sobre un
-    queryset solo trae esas 65 filas vía LIMIT/OFFSET; no carga toda la tabla)."""
+    """Página de 65 eventos por HORA REAL del evento (timestamp_evento DESC), igual
+    que los informes: así un evento OFFLINE (capturado antes pero recibido después,
+    con id mayor) cae en su posición cronológica y no arriba por su id de llegada.
+    Desempate por -id para un orden estable ante horas idénticas.
+
+    Congela la página a lista estable (65 filas) para resolver guardia/fotos sobre
+    los MISMOS objetos (Paginator sobre un queryset solo trae esas 65 filas vía
+    LIMIT/OFFSET; no carga toda la tabla)."""
     qs = (
         LibroNovedades.objects
         .select_related("tipo_evento", "punto_control")
-        .order_by("-id")
+        .order_by("-timestamp_evento", "-id")
     )
     page_obj = Paginator(qs, POR_PAGINA).get_page(request.GET.get("page"))
     page_obj.object_list = list(page_obj.object_list)  # congela a lista estable

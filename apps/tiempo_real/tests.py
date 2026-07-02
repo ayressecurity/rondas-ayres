@@ -3,6 +3,7 @@ Tests del módulo "Eventos en tiempo real": acceso (SSPP/super_admin), página
 global (no exige instalación), y el endpoint JSON con datos resueltos (cliente,
 instalación, guardia_nombre, fotos, color) + paginación.
 """
+from datetime import timedelta
 from uuid import UUID
 
 import jwt
@@ -122,6 +123,34 @@ class TiempoRealTests(TestCase):
         # Sin instalacion_id en sesión, el endpoint responde normal (página global).
         self._evento(self.t_novedad)
         self.assertEqual(self.client.get(reverse("tiempo_real:data")).status_code, 200)
+
+    # ---- FIX orden: por HORA REAL del evento (timestamp_evento), no por id ----
+    def _evento_en(self, ts_evento, ts_servidor):
+        return LibroNovedades.objects.create(
+            instalacion_id=10, guardia_keycloak_id=SUB, tipo_evento=self.t_novedad,
+            timestamp_evento=ts_evento, timestamp_servidor=ts_servidor, estado="ok", texto="x",
+        )
+
+    def test_orden_por_hora_real_no_por_id(self):
+        base = timezone.now()
+        # Reciente (hora real T2), creado PRIMERO -> id MENOR.
+        reciente = self._evento_en(base, base)
+        # OFFLINE: hora real T1 anterior, pero llega DESPUÉS -> id MAYOR.
+        offline = self._evento_en(base - timedelta(minutes=1), base + timedelta(minutes=5))
+        self.assertGreater(offline.id, reciente.id)  # el offline llegó después (id mayor)
+
+        eventos = self.client.get(reverse("tiempo_real:data")).json()["eventos"]
+        # Orden por HORA REAL desc: el reciente (T2) va ANTES que el offline (T1),
+        # aunque el offline tenga id mayor. Con -id salía al revés (el bug).
+        self.assertEqual([e["id"] for e in eventos], [reciente.id, offline.id])
+
+    def test_desempate_por_id_misma_hora(self):
+        base = timezone.now()
+        a = self._evento_en(base, base)          # misma hora exacta, id menor
+        b = self._evento_en(base, base)          # misma hora exacta, id mayor
+        eventos = self.client.get(reverse("tiempo_real:data")).json()["eventos"]
+        # Empate de hora -> desempata por -id (estable): el de id mayor primero.
+        self.assertEqual([e["id"] for e in eventos], [b.id, a.id])
 
     # ---- FIX fotos en refresco: el JSON de data trae 'fotos' por fila ----
     def test_data_fotos_por_fila_con_y_sin_imagen(self):
