@@ -19,7 +19,7 @@
     <table class="tabla-objetivos">
         <thead>
             <tr>
-                <th>Nombre</th>
+                <th>Turno</th>
                 <th>Fecha de inicio</th>
                 <th>Estado</th>
                 <th>N° de checkpoints</th>
@@ -30,7 +30,7 @@
         <tbody>
             {% for ronda in rondas %}
                 <tr class="fila-objetivo">
-                    <td data-col="Nombre">{{ ronda.nombre }}</td>
+                    <td data-col="Turno">{{ ronda.nombre }}</td>
                     <td data-col="Fecha de inicio">{{ ronda.fecha_inicio|date:"Y-m-d" }}</td>
                     <td data-col="Estado">{{ ronda.get_estado_display }}</td>
                     <td data-col="N° de checkpoints">{{ ronda.num_checkpoints }}</td>
