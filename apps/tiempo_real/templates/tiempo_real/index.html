@@ -94,14 +94,14 @@
             <tr>
                 <th>Fecha/Hora</th>
                 <th>Tipo de evento</th>
-                <th>Cliente</th>
+                {% if not es_vista_cliente %}<th>Cliente</th>{% endif %}
                 <th>Instalación</th>
                 <th>Punto de control</th>
                 <th>Guardia</th>
                 <th>Observación</th>
                 <th>Media</th>
-                <th>Comentario</th>
-                <th>Acción</th>
+                {% if not es_vista_cliente %}<th>Comentario</th>{% endif %}
+                {% if not es_vista_cliente %}<th>Acción</th>{% endif %}
             </tr>
         </thead>
         <tbody id="trBody">
@@ -109,7 +109,7 @@
                 <tr data-id="{{ ev.id }}" class="{{ ev.color }}">
                     <td data-col="Fecha/Hora">{{ ev.fecha }}</td>
                     <td data-col="Tipo de evento">{{ ev.tipo }}</td>
-                    <td data-col="Cliente">{{ ev.cliente }}</td>
+                    {% if not es_vista_cliente %}<td data-col="Cliente">{{ ev.cliente }}</td>{% endif %}
                     <td data-col="Instalación">{{ ev.instalacion }}</td>
                     <td data-col="Punto de control">{{ ev.punto }}</td>
                     <td data-col="Guardia">{{ ev.guardia }}</td>
@@ -123,6 +123,7 @@
                             <span class="media-sin">No tiene imagen</span>
                         {% else %}—{% endif %}
                     </td>
+                    {% if not es_vista_cliente %}
                     <td data-col="Comentario">{{ ev.comentario_central|default:"—" }}</td>
                     <td data-col="Acción">
                         {% if puede_comentar %}
@@ -133,6 +134,7 @@
                             </button>
                         {% else %}—{% endif %}
                     </td>
+                    {% endif %}
                 </tr>
             {% endfor %}
         </tbody>
@@ -190,6 +192,9 @@
     // Flag del servidor: ¿este usuario puede comentar? (el permiso REAL se revalida
     // en el endpoint; esto solo decide si se pinta el botón). Se refresca en cada tick.
     var puedeComentar = {{ puede_comentar|yesno:"true,false" }};
+    // Vista ACOTADA del rol cliente: sin columnas Cliente/Comentario/Acción. MISMO
+    // flag del servidor que el thead/tbody inicial -> paridad de columnas en el AJAX.
+    var esVistaCliente = {{ es_vista_cliente|yesno:"true,false" }};
     var tbody = document.getElementById("trBody");
     var modal = document.getElementById("fotosModal");
     if (!tbody) { return; }
@@ -232,18 +237,22 @@
             media = "—";
         }
         // ev.color es una clase controlada por el servidor (no entra texto del usuario).
-        return '<tr data-id="' + ev.id + '" class="' + ev.color + '">'
+        // Columnas gateadas por esVistaCliente: MISMAS que el render inicial (paridad).
+        var html = '<tr data-id="' + ev.id + '" class="' + ev.color + '">'
             + '<td data-col="Fecha/Hora">' + esc(ev.fecha) + '</td>'
-            + '<td data-col="Tipo de evento">' + esc(ev.tipo) + '</td>'
-            + '<td data-col="Cliente">' + esc(ev.cliente) + '</td>'
-            + '<td data-col="Instalación">' + esc(ev.instalacion) + '</td>'
+            + '<td data-col="Tipo de evento">' + esc(ev.tipo) + '</td>';
+        if (!esVistaCliente) { html += '<td data-col="Cliente">' + esc(ev.cliente) + '</td>'; }
+        html += '<td data-col="Instalación">' + esc(ev.instalacion) + '</td>'
             + '<td data-col="Punto de control">' + esc(ev.punto) + '</td>'
             + '<td data-col="Guardia">' + esc(ev.guardia) + '</td>'
             + '<td data-col="Observación">' + esc(ev.texto) + '</td>'
-            + '<td data-col="Media">' + media + '</td>'
-            + '<td data-col="Comentario">' + esc(ev.comentario_central || "—") + '</td>'
-            + '<td data-col="Acción">' + accionHTML(ev) + '</td>'
-            + '</tr>';
+            + '<td data-col="Media">' + media + '</td>';
+        if (!esVistaCliente) {
+            html += '<td data-col="Comentario">' + esc(ev.comentario_central || "—") + '</td>'
+                + '<td data-col="Acción">' + accionHTML(ev) + '</td>';
+        }
+        html += '</tr>';
+        return html;
     }
 
     // Firma = por fila, "id:tieneFoto". Incluye el estado de FOTO (no solo el id)

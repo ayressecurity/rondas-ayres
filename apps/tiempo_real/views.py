@@ -91,6 +91,14 @@ def puede_comentar(request):
     return permisos.es_super_admin(request) or "cenapoc" in permisos.roles_de(request)
 
 
+def es_vista_cliente(request):
+    """La Central se muestra ACOTADA para el rol 'cliente' (empresa externa): sin
+    las columnas Cliente (son todos suyos), Comentario ni Acción (notas internas de
+    la central, no le competen). super_admin ve la tabla completa aunque llevara el
+    rol. NO altera el filtrado/seguridad del 3.3a: es solo presentación."""
+    return permisos.es_cliente(request) and not permisos.es_super_admin(request)
+
+
 def _pagina(request):
     """Página de 65 eventos por HORA REAL del evento (timestamp_evento DESC), igual
     que los informes: así un evento OFFLINE (capturado antes pero recibido después,
@@ -184,6 +192,8 @@ def index(request):
         # Flag para pintar (o no) el botón de la columna Acción; el permiso real se
         # revalida SIEMPRE en el servidor (endpoint comentar).
         "puede_comentar": puede_comentar(request),
+        # Vista ACOTADA del rol cliente: oculta Cliente/Comentario/Acción (solo UI).
+        "es_vista_cliente": es_vista_cliente(request),
     })
 
 
@@ -200,6 +210,8 @@ def data(request):
         "has_next": page_obj.has_next(),
         # El JS usa este flag para decidir si pinta el botón tras cada refresco.
         "puede_comentar": puede_comentar(request),
+        # Mismo flag que el render inicial: mantiene la PARIDAD de columnas en el AJAX.
+        "es_vista_cliente": es_vista_cliente(request),
     })
 
 

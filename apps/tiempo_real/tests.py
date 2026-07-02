@@ -362,3 +362,49 @@ class TiempoRealAislamientoClienteTests(TestCase):
         ids = self._ids_data()
         self.assertIn(self.ev400.id, ids)
         self.assertIn(self.ev500.id, ids)
+
+    # ---- 3.3b: columnas acotadas para el rol cliente ----
+    def test_columnas_ocultas_para_cliente(self):
+        self._rol(["cliente"], cliente_id=400)
+        resp = self.client.get(reverse("tiempo_real:index"))
+        self.assertEqual(resp.status_code, 200)
+        # Ocultas para el cliente: Cliente, Comentario, Acción. Los <th> son
+        # SERVER-side puros (el JS del refresco solo emite <td>), así que su
+        # ausencia prueba que la columna no se muestra; el tbody usa el MISMO flag.
+        self.assertNotContains(resp, "<th>Cliente</th>")
+        self.assertNotContains(resp, "<th>Comentario</th>")
+        self.assertNotContains(resp, "<th>Acción</th>")
+        # Presentes: Fecha/Hora, Tipo, Instalación, Punto de control, Guardia, Observación, Media.
+        self.assertContains(resp, "<th>Instalación</th>")
+        self.assertContains(resp, "<th>Punto de control</th>")
+        self.assertContains(resp, "<th>Guardia</th>")
+        self.assertContains(resp, "<th>Observación</th>")
+        self.assertContains(resp, "<th>Media</th>")
+        # Flag del JS -> el refresco AJAX oculta las MISMAS columnas (paridad).
+        self.assertContains(resp, "var esVistaCliente = true;")
+
+    def test_columnas_completas_para_super_admin(self):
+        self._rol(["super_admin"])
+        resp = self.client.get(reverse("tiempo_real:index"))
+        self.assertEqual(resp.status_code, 200)
+        # La tabla queda EXACTAMENTE como hoy (con Cliente, Comentario, Acción).
+        self.assertContains(resp, "<th>Cliente</th>")
+        self.assertContains(resp, "<th>Comentario</th>")
+        self.assertContains(resp, "<th>Acción</th>")
+        self.assertContains(resp, "var esVistaCliente = false;")
+
+    def test_columnas_completas_para_cenapoc(self):
+        self._rol(["cenapoc"])
+        resp = self.client.get(reverse("tiempo_real:index"))
+        self.assertContains(resp, "<th>Cliente</th>")
+        self.assertContains(resp, "<th>Comentario</th>")
+        self.assertContains(resp, "<th>Acción</th>")
+
+    def test_data_flag_es_vista_cliente_por_rol(self):
+        # El JSON del refresco expone el MISMO flag -> paridad inicial ↔ AJAX.
+        self._rol(["cliente"], cliente_id=400)
+        self.assertTrue(self.client.get(reverse("tiempo_real:data")).json()["es_vista_cliente"])
+        self._rol(["sspp"])
+        self.assertFalse(self.client.get(reverse("tiempo_real:data")).json()["es_vista_cliente"])
+        self._rol(["super_admin"])
+        self.assertFalse(self.client.get(reverse("tiempo_real:data")).json()["es_vista_cliente"])
