@@ -357,6 +357,40 @@ class TiempoRealAislamientoClienteTests(TestCase):
         self.assertIn(self.ev400.id, ids)
         self.assertIn(self.ev500.id, ids)
 
+    # ---- FIX "fallar abierto": la presencia de 'cliente' FUERZA el aislamiento ----
+    def test_cliente_mas_cenapoc_se_aisla(self):
+        # cliente + cenapoc (SIN super_admin): antes el atajo cenapoc daba TODO.
+        # Ahora manda 'cliente' -> solo lo suyo.
+        self._rol(["cliente", "cenapoc"], cliente_id=400)
+        ids = self._ids_data()
+        self.assertIn(self.ev400.id, ids)
+        self.assertNotIn(self.ev500.id, ids)   # NO ve al otro por el cenapoc
+
+    def test_cliente_mas_cenapoc_sin_cid_no_ve_nada(self):
+        # Rol cliente presente pero sin cliente_id resoluble: VACÍO, aunque tenga
+        # cenapoc (falla CERRADO; el cenapoc no lo "abre").
+        self._rol(["cliente", "cenapoc"], cliente_id=None)
+        self.assertEqual(self._ids_data(), [])
+
+    def test_cliente_cid_no_vigente_no_ve_nada(self):
+        # cliente_id que no resuelve a un cliente vigente del espejo -> vacío.
+        self._rol(["cliente"], cliente_id=999)   # no existe el cliente 999
+        self.assertEqual(self._ids_data(), [])
+
+    def test_cliente_cid_de_cliente_borrado_no_ve_nada(self):
+        # cliente_id apunta a un cliente soft-deleted -> no vigente -> vacío.
+        Cliente.objects.create(id=600, razon_social="Borrado", rut="600-9",
+                               deleted_at=timezone.now())
+        self._rol(["cliente"], cliente_id=600)
+        self.assertEqual(self._ids_data(), [])
+
+    def test_cenapoc_puro_ve_todos(self):
+        # cenapoc SIN rol cliente: sigue viendo TODO (sin cambios).
+        self._rol(["cenapoc"])
+        ids = self._ids_data()
+        self.assertIn(self.ev400.id, ids)
+        self.assertIn(self.ev500.id, ids)
+
     def test_sspp_ve_todos(self):
         self._rol(["sspp"])
         ids = self._ids_data()

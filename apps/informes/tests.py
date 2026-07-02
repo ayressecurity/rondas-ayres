@@ -222,6 +222,21 @@ class InformesAislamientoClienteTests(TestCase):
         resp = self.client.get(reverse("informes:rondas"))
         self.assertEqual(resp.status_code, 200)
 
+    def test_cliente_mas_cenapoc_sin_cid_no_ve_informe(self):
+        # FIX "fallar abierto": cliente+cenapoc SIN cliente_id válido no accede al
+        # informe (el middleware le vacía cliente/instalación; el cenapoc no abre).
+        self._fijar_instalacion(40, "Propia")
+        token = jwt.encode(
+            {"realm_access": {"roles": ["cliente", "cenapoc"]}},   # sin cliente_id
+            "x", algorithm="HS256",
+        )
+        s = self.client.session
+        s["oidc_access_token"] = token
+        s.save()
+        resp = self.client.get(reverse("informes:rondas"))
+        self.assertEqual(resp.status_code, 302)                    # sin contexto -> redirige
+        self.assertNotIn("instalacion_id", self.client.session)
+
 
 class InsercionNoTocaComentarioTests(TestCase):
     """Los flujos de inserción NO setean comentario_central: queda NULL (sin tocarse)."""

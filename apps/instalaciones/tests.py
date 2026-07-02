@@ -64,3 +64,18 @@ class RolClienteInstalacionesTests(TestCase):
         resp = self.client.get(reverse("instalaciones:seleccionar", args=[self.propia.id]))
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(self.client.session.get("instalacion_id"), 40)
+
+    def test_cliente_mas_cenapoc_sin_cid_no_lista_instalaciones(self):
+        # FIX "fallar abierto": un cliente+cenapoc SIN cliente_id válido NO ve la
+        # lista de instalaciones (el middleware le vacía el contexto; el cenapoc no
+        # lo abre). Redirige en vez de listar -> ninguna instalación a la vista.
+        token = jwt.encode(
+            {"realm_access": {"roles": ["cliente", "cenapoc"]}},   # sin cliente_id
+            "x", algorithm="HS256",
+        )
+        s = self.client.session
+        s["oidc_access_token"] = token
+        s.save()
+        resp = self.client.get(reverse("instalaciones:index"))
+        self.assertEqual(resp.status_code, 302)                    # requiere_cliente: sin contexto
+        self.assertNotIn("cliente_id", self.client.session)        # el middleware lo vació

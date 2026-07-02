@@ -25,6 +25,7 @@ from django.views.decorators.http import require_POST
 
 from apps.cuentas import permisos
 from apps.cuentas.identidad import norm_keycloak_id as _norm
+from apps.espejo import repositorio
 from apps.espejo.models import Cliente, Instalacion
 from apps.informes.base import _adjuntar_fotos, _nombres_de_guardias
 from apps.novedades.models import LibroNovedades
@@ -61,25 +62,32 @@ def solo_sspp(view):
 
 
 def _acotar_por_cliente(request, qs):
-    """Aísla la Central por cliente para el rol 'cliente' (empresa externa).
+    """Aísla la Central por cliente. PRECEDENCIA (falla CERRADO):
 
-    - super_admin / sspp / cenapoc: ven TODO (qs intacto).
-    - rol 'cliente' con cliente resoluble: solo eventos de instalaciones de SU
-      cliente (instalacion_id__in). Nunca los de otra empresa.
-    - rol 'cliente' SIN cliente resoluble (claim ausente/mal/cliente borrado):
-      queryset VACÍO. Jamás cae a "ver todos"."""
-    roles = set(permisos.roles_de(request))
-    if permisos.es_super_admin(request) or {"sspp", "cenapoc"} & roles:
+    - super_admin: ve TODO (rol maestro; ÚNICA excepción a la precedencia).
+    - presencia del rol 'cliente' (aunque venga MEZCLADO con sspp/cenapoc): FUERZA
+      el aislamiento. Con cliente_id resoluble a un cliente vigente -> solo eventos
+      de SUS instalaciones. SIN cliente resoluble (claim ausente/mal/cliente
+      borrado) -> queryset VACÍO. Un 'cliente' NUNCA ve todo.
+    - sin rol 'cliente': monitoreo global (sspp/cenapoc) ve TODO (sin cambios).
+
+    Ojo con el ORDEN: el check de 'cliente' va ANTES del atajo sspp/cenapoc; si no,
+    un cliente+cenapoc caería en el atajo y vería todo (fallar ABIERTO)."""
+    if permisos.es_super_admin(request):
         return qs
+    roles = set(permisos.roles_de(request))
     if "cliente" in roles:
         cid = permisos.cliente_de(request)
-        if not cid:
-            return qs.none()
+        cli = repositorio.obtener_cliente(cid) if cid else None
+        if not cli:
+            return qs.none()   # rol cliente sin cliente válido = ve NADA
         inst_ids = list(
-            Instalacion.objects.filter(cliente_id=cid, deleted_at__isnull=True)
+            Instalacion.objects.filter(cliente_id=cli.id, deleted_at__isnull=True)
             .values_list("id", flat=True)
         )
         return qs.filter(instalacion_id__in=inst_ids)
+    if {"sspp", "cenapoc"} & roles:
+        return qs
     return qs
 
 
