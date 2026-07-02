@@ -10,6 +10,7 @@ de test (así no hay red ni JWKS real).
 import shutil
 import tempfile
 from datetime import date, datetime, time as dtime, timedelta, timezone
+from decimal import Decimal
 from unittest.mock import patch
 from uuid import UUID
 
@@ -1068,6 +1069,36 @@ class NovedadApiTests(_JwtMixin, TestCase):
         )
         self.assertEqual(resp.status_code, 401)
 
+    # ---- offline: timestamp_evento opcional (PIEZA C) ----
+    def _post_ts(self, timestamp):
+        return self.client.post(
+            self.URL, {"texto": "offline", "timestamp_evento": timestamp}, format="multipart",
+            HTTP_AUTHORIZATION=f"Bearer {self._token(_claims(sub=self.SUB))}",
+            HTTP_X_DEVICE_TOKEN=self.token,
+        )
+
+    def test_novedad_con_timestamp_usa_esa_hora(self):
+        resp = self._post_ts("2026-07-01T09:05:00")
+        self.assertEqual(resp.status_code, 201)
+        ev = LibroNovedades.objects.get(id=resp.json()["id"])
+        # Interpretada como hora LOCAL America/Santiago.
+        self.assertEqual(ev.timestamp_evento, dj_tz.make_aware(datetime(2026, 7, 1, 9, 5, 0)))
+
+    def test_novedad_sin_timestamp_usa_servidor(self):
+        antes = dj_tz.now()
+        resp = self._post()  # sin timestamp -> hora de servidor, como hoy
+        self.assertEqual(resp.status_code, 201)
+        ev = LibroNovedades.objects.get(id=resp.json()["id"])
+        self.assertGreaterEqual(ev.timestamp_evento, antes - timedelta(seconds=5))
+        self.assertLessEqual(ev.timestamp_evento, dj_tz.now() + timedelta(seconds=5))
+
+    def test_novedad_timestamp_malformado_no_400_usa_servidor(self):
+        antes = dj_tz.now()
+        resp = self._post_ts("no-es-fecha")
+        self.assertEqual(resp.status_code, 201)   # nunca 400 por timestamp malo
+        ev = LibroNovedades.objects.get(id=resp.json()["id"])
+        self.assertGreaterEqual(ev.timestamp_evento, antes - timedelta(seconds=5))
+
 
 class CancelarRondaApiTests(_JwtMixin, TestCase):
     """POST /api/rondas/<id>/cancelar — cancelación con observación obligatoria."""
@@ -1430,3 +1461,135 @@ class ConfigurarQrApiTests(_JwtMixin, TestCase):
         resp = self._post_rol(self._body(lng="-200"), ["sspp"])
         self.assertEqual(resp.status_code, 400)
         self.assertIn("Longitud fuera de rango", resp.json()["error"]["mensaje"])
+
+
+class SeedArriboSinConexionTests(TestCase):
+    """El seed siembra 'arribo_sin_conexion' (idempotente: correrlo 2 veces no duplica)."""
+
+    def test_arribo_sin_conexion_sembrado_idempotente(self):
+        call_command("seed_tipos_evento")
+        call_command("seed_tipos_evento")  # 2a corrida: update_or_create no duplica
+        qs = TipoEvento.objects.filter(codigo="arribo_sin_conexion")
+        self.assertEqual(qs.count(), 1)
+        t = qs.first()
+        self.assertEqual(t.nombre, "Arribo sin conexión")
+        self.assertEqual(t.categoria, "ronda")
+        self.assertTrue(t.activo)
+
+
+class OfflineEventosApiTests(_JwtMixin, TestCase):
+    """POST /api/eventos con "offline": true -> arribo_sin_conexion (modo sin señal).
+
+    El flujo ONLINE (sin el flag) queda intacto: hora de servidor y validación de
+    posición (arribo / arribo_sin_geo / arribo_invalido)."""
+    URL = "/api/eventos"
+    QR = "40404040-4040-4040-4040-404040404040"
+    LAT, LNG = -33.4, -70.56
+
+    def setUp(self):
+        super().setUp()
+        call_command("seed_tipos_evento")  # arribo, arribo_sin_conexion, codigo_no_existe...
+        self.cp = PuntoControl.objects.create(
+            instalacion_id=40, nombre="Porton Offline",
+            lat=str(self.LAT), lng=str(self.LNG), tolerancia_mts=30, validar_posicion=True,
+            qr_token=self.QR, activo=True,
+        )
+        # Ronda activa TODO el día: contiene cualquier timestamp -> se resuelve ronda.
+        self.ronda = Ronda.objects.create(
+            cliente_id=1, instalacion_id=40, nombre="Ronda Día",
+            fecha_inicio=date(2026, 1, 1), hora_inicio=dtime(0, 0), hora_fin=dtime(23, 59, 59),
+        )
+        RondaSecuencia.objects.create(ronda=self.ronda, punto_control=self.cp, orden=1)
+
+    def _ultimo(self):
+        return LibroNovedades.objects.order_by("-id").first()
+
+    # ---- offline CON coords ----
+    def test_offline_con_coords_201(self):
+        body = {"offline": True, "qr_token": self.QR, "lat": "-33.44", "lng": "-70.65",
+                "timestamp_evento": "2026-07-01T10:15:30.500"}
+        resp = self._post(self.URL, body)
+        self.assertEqual(resp.status_code, 201)
+        d = resp.json()
+        self.assertEqual(d["tipo_evento"], "arribo_sin_conexion")
+        self.assertIsNone(d["dentro_geocerca"])       # SIN validación de posición
+        self.assertIsNone(d["distancia_metros"])
+        self.assertEqual(d["progreso"]["escaneados"], 1)   # suma al progreso
+        ev = self._ultimo()
+        self.assertEqual(ev.tipo_evento.codigo, "arribo_sin_conexion")
+        # Hora = la del timestamp (local America/Santiago).
+        self.assertEqual(ev.timestamp_evento, dj_tz.make_aware(datetime(2026, 7, 1, 10, 15, 30, 500000)))
+        self.assertEqual(ev.lat, Decimal("-33.44"))    # coords guardadas tal cual
+        self.assertEqual(ev.lng, Decimal("-70.65"))
+        self.assertIsNone(ev.dentro_geocerca)
+        self.assertEqual(ev.ronda_id, self.ronda.id)
+
+    # ---- offline SIN coords ----
+    def test_offline_sin_coords_guarda_cero(self):
+        body = {"offline": True, "qr_token": self.QR, "timestamp_evento": "2026-07-01T11:00:00"}
+        resp = self._post(self.URL, body)
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()["tipo_evento"], "arribo_sin_conexion")
+        self.assertEqual(resp.json()["progreso"]["escaneados"], 1)
+        ev = self._ultimo()
+        self.assertEqual(ev.lat, Decimal("0"))         # 0/0, no NULL
+        self.assertEqual(ev.lng, Decimal("0"))
+
+    def test_offline_flag_como_string(self):
+        body = {"offline": "true", "qr_token": self.QR, "timestamp_evento": "2026-07-01T12:00:00"}
+        self.assertEqual(self._post(self.URL, body).json()["tipo_evento"], "arribo_sin_conexion")
+
+    def test_offline_timestamp_malformado_no_400(self):
+        antes = dj_tz.now()
+        body = {"offline": True, "qr_token": self.QR, "lat": "-33.44", "lng": "-70.65",
+                "timestamp_evento": "no-es-fecha"}
+        resp = self._post(self.URL, body)
+        self.assertEqual(resp.status_code, 201)        # NUNCA 400 por timestamp malo
+        ev = self._ultimo()
+        self.assertEqual(ev.tipo_evento.codigo, "arribo_sin_conexion")
+        self.assertGreaterEqual(ev.timestamp_evento, antes - timedelta(seconds=5))  # hora servidor
+        self.assertLessEqual(ev.timestamp_evento, dj_tz.now() + timedelta(seconds=5))
+
+    def test_offline_sin_timestamp_usa_servidor(self):
+        antes = dj_tz.now()
+        resp = self._post(self.URL, {"offline": True, "qr_token": self.QR, "lat": "-33.44", "lng": "-70.65"})
+        self.assertEqual(resp.status_code, 201)
+        self.assertGreaterEqual(self._ultimo().timestamp_evento, antes - timedelta(seconds=5))
+
+    def test_offline_qr_inexistente_404(self):
+        body = {"offline": True, "qr_token": "no-existe", "timestamp_evento": "2026-07-01T10:00:00"}
+        resp = self._post(self.URL, body)
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(self._ultimo().tipo_evento.codigo, "codigo_no_existe")  # como online
+
+    def test_offline_suma_progreso_puntos_unicos(self):
+        cp2 = PuntoControl.objects.create(
+            instalacion_id=40, nombre="Porton Sur", lat=str(self.LAT), lng=str(self.LNG),
+            tolerancia_mts=30, validar_posicion=True,
+            qr_token="40404040-0000-0000-0000-000000000002", activo=True,
+        )
+        RondaSecuencia.objects.create(ronda=self.ronda, punto_control=cp2, orden=2)
+        r1 = self._post(self.URL, {"offline": True, "qr_token": self.QR, "timestamp_evento": "2026-07-01T10:00:00"})
+        self.assertEqual(r1.json()["progreso"]["escaneados"], 1)
+        r2 = self._post(self.URL, {"offline": True, "qr_token": cp2.qr_token, "timestamp_evento": "2026-07-01T10:05:00"})
+        self.assertEqual(r2.json()["progreso"]["escaneados"], 2)
+        self.assertEqual(r2.json()["progreso"]["total"], 2)
+        # Re-escaneo del mismo punto: sigue contando ÚNICO (no 3/2).
+        r3 = self._post(self.URL, {"offline": True, "qr_token": self.QR, "timestamp_evento": "2026-07-01T10:10:00"})
+        self.assertEqual(r3.json()["progreso"]["escaneados"], 2)
+
+    # ---- ONLINE intacto (sin flag offline) ----
+    def test_online_dentro_de_geocerca_arribo(self):
+        body = {"qr_token": self.QR, "lat": str(self.LAT), "lng": str(self.LNG)}
+        resp = self._post(self.URL, body)
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()["tipo_evento"], "arribo")   # validación de posición ON
+        self.assertTrue(resp.json()["dentro_geocerca"])
+        self.assertEqual(self._ultimo().tipo_evento.codigo, "arribo")
+
+    def test_online_fuera_de_geocerca_invalido(self):
+        body = {"qr_token": self.QR, "lat": str(self.LAT + 0.01), "lng": str(self.LNG)}
+        resp = self._post(self.URL, body)
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()["tipo_evento"], "arribo_invalido")
+        self.assertFalse(resp.json()["dentro_geocerca"])

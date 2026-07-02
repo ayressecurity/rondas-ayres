@@ -10,6 +10,8 @@ Aislamiento por guardia: los listados "?mias" se filtran SIEMPRE por el
 keycloak_id del token; nunca devuelven datos de otro guardia.
 """
 import logging
+import re
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 
@@ -53,6 +55,7 @@ from apps.checkpoints.services import ConfigQrInvalida, aplicar_configuracion_qr
 from apps.comun.services.rondas import (
     SinRondaActiva,
     iniciar_o_reusar_ejecucion,
+    registrar_arribo_offline,
     registrar_escaneo,
     registrar_evento_simple,
     ventanas_de_alarma,
@@ -105,6 +108,45 @@ def _ids_rondas_del_guardia(sub):
         .filter(kc_norm=objetivo)
         .values_list("ronda_id", flat=True)
     )
+
+
+# --------------------------------------------------------------------------- #
+# Modo OFFLINE de la app: flag + parser de la hora real del evento.            #
+# --------------------------------------------------------------------------- #
+def _es_offline(valor):
+    """True si el flag `offline` del body es verdadero. Tolera bool True o los
+    strings "true"/"1"/"on"/"yes" (como otros flags del proyecto). Ausente -> False."""
+    return str(valor).strip().lower() in ("1", "true", "on", "yes")
+
+
+# Fracción de segundos (para acotarla a microsegundos, único límite de datetime).
+_FRACCION_RE = re.compile(r"\.(\d+)")
+
+
+def _parse_timestamp_local(valor):
+    """Parsea `timestamp_evento` (ISO local SIN zona, ej. "2026-07-02T14:32:10.482")
+    y lo devuelve como datetime AWARE en America/Santiago (la zona activa).
+
+    - Fracciones de 0 a 9 dígitos: se acotan a 6 (datetime solo llega a microseg.).
+    - Interpreta la hora como LOCAL (make_aware con la zona del proyecto), NO UTC.
+    - Malformado / ausente / hora inexistente por DST -> None. NUNCA lanza: el
+      llamador usa la hora de servidor (un 400 haría que la app descarte la marca).
+    """
+    if not isinstance(valor, str) or not valor.strip():
+        return None
+    texto = valor.strip()
+    # Acota la fracción de segundos a 6 dígitos (fromisoformat no admite 7-9).
+    texto = _FRACCION_RE.sub(lambda m: "." + m.group(1)[:6], texto, count=1)
+    try:
+        dt = datetime.fromisoformat(texto)
+    except (ValueError, TypeError):
+        return None
+    if timezone.is_aware(dt):
+        return dt  # trajo zona (raro; el contrato dice sin zona) -> se respeta
+    try:
+        return timezone.make_aware(dt)  # naive -> se interpreta como hora local
+    except (*_ERRORES_DST, ValueError, OverflowError):
+        return None
 
 
 @api_view(["GET"])
@@ -290,6 +332,51 @@ def _evento_a_http(res):
     raise exc
 
 
+def _crear_evento_offline(request):
+    """Rama OFFLINE de POST /api/eventos (body con "offline": true).
+
+    Registra un arribo hecho SIN señal (arribo_sin_conexion) con la hora real de
+    la app; sin validación de posición; coords tal cual o 0/0 si faltan. La
+    identidad es del token y la instalación se deriva del punto (QR), nunca del
+    body. Reutiliza el service (registrar_arribo_offline) y el MISMO adaptador
+    HTTP (_evento_a_http) que el online, así que las respuestas son consistentes.
+    """
+    guardia = request.sub_con_guiones             # identidad SIEMPRE del token
+    qr_token = str(request.data.get("qr_token") or "").strip()
+    if not qr_token:
+        raise solicitud_invalida("Falta el qr_token.", "body_invalido")
+
+    # Coords OPCIONALES en offline: Decimal si vienen, None si se omiten (-> 0/0 en el service).
+    lat = _coord_opcional(request.data.get("lat"))
+    lng = _coord_opcional(request.data.get("lng"))
+    texto = (request.data.get("texto") or "").strip() or None
+    # Hora real del escaneo (terreno). Malformada/ausente -> None -> el service usa "ahora".
+    ts_terreno = _parse_timestamp_local(request.data.get("timestamp_evento"))
+    ahora = timezone.now()                        # recepción en el servidor
+
+    dispositivo = getattr(request, "dispositivo", None)  # del X-Device-Token (o None)
+    # DOBLE CANDADO (igual que online): si vino un dispositivo, debe estar enrolado
+    # en la MISMA instalación del punto escaneado.
+    punto = PuntoControl.objects.filter(qr_token=qr_token, activo=True).first()
+    if punto is not None and dispositivo is not None and dispositivo.instalacion_id != punto.instalacion_id:
+        raise solicitud_invalida(
+            "Este teléfono no está enrolado en la instalación de este punto.",
+            "dispositivo_otra_instalacion",
+        )
+
+    res = registrar_arribo_offline(
+        guardia_keycloak_id=guardia,
+        qr_token=qr_token,
+        lat=lat,
+        lng=lng,
+        texto=texto,
+        ahora=ahora,
+        timestamp_evento=ts_terreno,
+        dispositivo_id=dispositivo.id if dispositivo is not None else None,
+    )
+    return _evento_a_http(res)
+
+
 @api_view(["POST"])
 @authentication_classes([DeviceTokenAuthentication, KeycloakJWTAuthentication])
 def crear_evento(request):
@@ -302,7 +389,15 @@ def crear_evento(request):
     Dos identidades (Fase 4): el GUARDIA sale del token (sub) y el DISPOSITIVO del
     header X-Device-Token (opcional). Si viene un dispositivo válido se aplica el
     DOBLE CANDADO de instalación y se sella libro_novedades.dispositivo_id.
+
+    MODO OFFLINE (aditivo): si el body trae "offline": true, se deriva a una rama
+    aparte (_crear_evento_offline) que registra arribo_sin_conexion con la hora
+    real de la app y SIN validar posición. El flujo ONLINE (sin ese flag) queda
+    EXACTAMENTE igual: mismo serializer, misma hora de servidor, misma validación.
     """
+    if _es_offline(request.data.get("offline")):
+        return _crear_evento_offline(request)
+
     # 1) Validar el body. La identidad y la instalación NO salen de aquí.
     ser = EventoCreateSerializer(data=request.data)
     if not ser.is_valid():
@@ -619,12 +714,16 @@ def sesion_inicio(request):
 def crear_novedad(request):
     """POST /api/novedades — registra una novedad (tipo_evento 'novedad').
 
-    multipart/form-data. Campos: `texto` (OBLIGATORIO), `fotos` (0..2, OPCIONALES).
+    multipart/form-data. Campos: `texto` (OBLIGATORIO), `fotos` (0..2, OPCIONALES),
+    `timestamp_evento` (OPCIONAL, modo offline).
 
     - Sin X-Device-Token (o dispositivo inválido) -> 400 dispositivo_requerido.
     - `texto` vacío/ausente -> 400 (la observación es obligatoria).
     - >2 fotos o foto inválida (tipo/tamaño) -> 400 SIN registrar nada
       (todo-o-nada: evento + medios en una sola transacción).
+    - `timestamp_evento` (ISO local America/Santiago): si viene (offline) la novedad
+      se registra con ESA hora; si no viene (online) se usa la hora de servidor,
+      EXACTAMENTE como hoy. Malformado -> se ignora (hora de servidor), nunca 400.
     - OK -> 201 con id, tipo_evento, instalacion_id, hora (HH:MM:SS) y fotos[].
     """
     dispositivo = getattr(request, "dispositivo", None)
@@ -642,6 +741,9 @@ def crear_novedad(request):
         )
 
     ahora = timezone.now()  # hora REAL del servidor (Santiago vía timezone)
+    # Offline: hora real de la novedad (terreno). None (ausente/malformado) -> el
+    # service usa `ahora` -> comportamiento ONLINE idéntico al de hoy.
+    ts_terreno = _parse_timestamp_local(request.data.get("timestamp_evento"))
 
     # Todo-o-nada: si una foto es inválida, guardar_media lanza y la transacción
     # revierte también el evento recién creado.
@@ -653,6 +755,7 @@ def crear_novedad(request):
             dispositivo_id=dispositivo.id,
             texto=texto,
             ahora=ahora,
+            timestamp_evento=ts_terreno,                 # offline: hora de terreno (o None)
         )
         if res["resultado"] == "catalogo_incompleto":
             raise catalogo_no_disponible()
@@ -666,7 +769,8 @@ def crear_novedad(request):
             "id": res["libro_id"],
             "tipo_evento": "novedad",
             "instalacion_id": dispositivo.instalacion_id,
-            "hora": timezone.localtime(ahora).strftime("%H:%M:%S"),
+            # Hora del EVENTO (terreno si vino offline; si no, la de servidor).
+            "hora": timezone.localtime(ts_terreno or ahora).strftime("%H:%M:%S"),
             "fotos": [{"id": m["id"], "url_relativa": m["url_relativa"]} for m in medios],
         },
         status=status.HTTP_201_CREATED,

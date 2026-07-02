@@ -74,9 +74,9 @@ def _en_rango(t, ini, fin):
     return t >= ini or t <= fin  # cruza medianoche (ej. 19:00 -> 07:00)
 
 
-def _ronda_para_ahora(instalacion_id):
-    """Ronda activa DE ESTA INSTALACIÓN cuyo rango horario contiene la hora actual
-    de Santiago (hora del SERVIDOR, no del navegador). None si ninguna aplica.
+def _ronda_para_momento(instalacion_id, momento):
+    """Ronda activa DE ESTA INSTALACIÓN cuyo rango horario contiene la hora local
+    (Santiago) de `momento` (un datetime aware). None si ninguna aplica.
 
     SIEMPRE filtra por instalacion_id: es imposible que devuelva una ronda de otra
     instalación, aunque exista otra ronda con el MISMO nombre y horario en otra
@@ -85,7 +85,7 @@ def _ronda_para_ahora(instalacion_id):
     Desempate determinista (caso secundario): si dos rondas de la MISMA
     instalación solapan horario, se elige la de mayor id (la creada más
     recientemente). En el flujo normal (Día/Noche sin solape) solo una calza."""
-    ahora = timezone.localtime(timezone.now()).time()
+    hora = timezone.localtime(momento).time()
     candidatas = [
         r for r in Ronda.objects.filter(
             instalacion_id=instalacion_id,
@@ -93,9 +93,16 @@ def _ronda_para_ahora(instalacion_id):
             hora_inicio__isnull=False,
             hora_fin__isnull=False,
         )
-        if _en_rango(ahora, r.hora_inicio, r.hora_fin)
+        if _en_rango(hora, r.hora_inicio, r.hora_fin)
     ]
     return max(candidatas, key=lambda r: r.id) if candidatas else None
+
+
+def _ronda_para_ahora(instalacion_id):
+    """Ronda activa cuyo rango horario contiene la hora actual del SERVIDOR
+    (Santiago). Thin-wrapper de _ronda_para_momento con `timezone.now()`:
+    comportamiento idéntico al anterior (lo usa el escaneo online)."""
+    return _ronda_para_momento(instalacion_id, timezone.now())
 
 
 def _aware(fecha, hora):
@@ -221,7 +228,7 @@ def _ventana_alarma(ronda, ref):
     return (activa[1], activa[2])
 
 
-def _estado_ejecucion(ronda_id, guardia_keycloak_id, ventana):
+def _estado_ejecucion(ronda_id, guardia_keycloak_id, ventana, campo_tiempo="timestamp_servidor"):
     """Progreso dentro de la VENTANA (de alarma o de turno): puntos en orden +
     cuáles ya escaneó ESE guardia para ESA ronda dentro de [inicio, fin].
 
@@ -229,6 +236,11 @@ def _estado_ejecucion(ronda_id, guardia_keycloak_id, ventana):
     por EL guardia en la ventana (se lee SIEMPRE de libro_novedades, nunca de
     memoria/sesión: así el progreso sobrevive a cierre de app/sesión/reinicio).
     El conteo es POR GUARDIA (cada guardia su propio avance), como hoy.
+
+    `campo_tiempo` (default 'timestamp_servidor') = columna por la que se filtra la
+    ventana. El escaneo online usa el default (comportamiento intacto). El arribo
+    OFFLINE pasa 'timestamp_evento' porque su hora real (terreno) es la que cae en
+    la ventana del turno; su timestamp_servidor es la hora de reenvío (posterior).
     """
     inicio, fin = ventana
     secuencia = (
@@ -243,9 +255,8 @@ def _estado_ejecucion(ronda_id, guardia_keycloak_id, ventana):
         .filter(
             ronda_id=ronda_id,
             guardia_keycloak_id=guardia_keycloak_id,
-            timestamp_servidor__gte=inicio,
-            timestamp_servidor__lte=fin,
             punto_control_id__in=punto_ids,
+            **{f"{campo_tiempo}__gte": inicio, f"{campo_tiempo}__lte": fin},
         )
         .values_list("punto_control_id", flat=True)
     )
@@ -509,3 +520,108 @@ def registrar_evento_simple(*, instalacion_id, guardia_keycloak_id, codigo_tipo,
         texto=texto,
     )
     return {"resultado": "ok", "libro_id": evento.id, "tipo_evento": codigo_tipo}
+
+
+# --------------------------------------------------------------------------- #
+# Arribo OFFLINE (modo sin conexión de la app). ADITIVO: NO toca registrar_escaneo #
+# ni el flujo online. Es un registro HISTÓRICO reenviado al recuperar señal.       #
+# --------------------------------------------------------------------------- #
+def registrar_arribo_offline(*, guardia_keycloak_id, qr_token, lat, lng, texto, ahora,
+                             timestamp_evento=None, dispositivo_id=None):
+    """Registra un arribo hecho SIN señal (tipo `arribo_sin_conexion`).
+
+    Diferencias con el escaneo online (a propósito, por ser un registro histórico
+    que la app reenvía al reconectar):
+      - Tipo SIEMPRE `arribo_sin_conexion`: NO se valida geocerca/posición (nunca
+        arribo_sin_geo/arribo_invalido). dentro_geocerca/distancia = NULL.
+      - HORA: `timestamp_evento` (terreno, la hora real del escaneo) va a
+        timestamp_evento; `ahora` (recepción) a timestamp_servidor. Si no vino
+        timestamp válido -> se usa `ahora` en ambos (fallback, sin fallar).
+      - NO exige ronda/ventana activa AHORA: la ronda se resuelve por la HORA del
+        evento (timestamp_evento). Si ninguna calza, ronda_id queda NULL (igual se
+        registra el arribo; es un dato válido).
+      - COORDENADAS: si vienen (Decimal), se guardan tal cual; si faltan (None),
+        se guardan 0 y 0 (no NULL) — así en los informes se ve el arribo sin señal.
+
+    Devuelve el MISMO dict-discriminador que registrar_escaneo (lo traduce el mismo
+    adaptador _evento_a_http): codigo_no_existe / catalogo_incompleto / ok (+ progreso).
+    """
+    ts_evento = timestamp_evento or ahora   # terreno (o servidor si no vino/ inválido)
+    ts_servidor = ahora                      # recepción en el server
+
+    cp = PuntoControl.objects.filter(qr_token=qr_token, activo=True).first()
+
+    with transaction.atomic():
+        if cp is None:
+            # Mismo trato que online: se registra codigo_no_existe (con la hora de la
+            # app) y el adaptador responde 404; así la app no reintenta para siempre.
+            tipo_ne = TipoEvento.objects.filter(codigo="codigo_no_existe").first()
+            if tipo_ne:
+                LibroNovedades.objects.create(
+                    instalacion_id=0,
+                    guardia_keycloak_id=guardia_keycloak_id,
+                    dispositivo_id=dispositivo_id,
+                    tipo_evento=tipo_ne,
+                    timestamp_evento=ts_evento,
+                    timestamp_servidor=ts_servidor,
+                    lat=lat,
+                    lng=lng,
+                    estado="error",
+                    texto=texto or f"QR escaneado sin coincidencia (offline): {qr_token}",
+                )
+            return {"resultado": "codigo_no_existe"}
+
+        tipo = TipoEvento.objects.filter(codigo="arribo_sin_conexion").first()
+        if tipo is None:
+            return {"resultado": "catalogo_incompleto"}
+
+        # Sin coords -> 0/0 (no NULL): en informes queda claro "fue al punto sin señal".
+        lat_val = lat if lat is not None else Decimal("0")
+        lng_val = lng if lng is not None else Decimal("0")
+
+        # Ronda del MOMENTO del evento (por su hora real), no de "ahora".
+        ronda = _ronda_para_momento(cp.instalacion_id, ts_evento)
+
+        evento = LibroNovedades.objects.create(
+            instalacion_id=cp.instalacion_id,
+            ronda_id=ronda.id if ronda else None,
+            punto_control=cp,
+            guardia_keycloak_id=guardia_keycloak_id,
+            dispositivo_id=dispositivo_id,
+            tipo_evento=tipo,
+            timestamp_evento=ts_evento,
+            timestamp_servidor=ts_servidor,
+            lat=lat_val,
+            lng=lng_val,
+            distancia_metros=None,       # sin validación de posición
+            dentro_geocerca=None,        # sin geocerca
+            estado="ok",
+            texto=texto,
+        )
+
+    resp = {
+        "resultado": "ok",
+        "libro_id": evento.id,
+        "tipo_evento": tipo.codigo,       # arribo_sin_conexion
+        "checkpoint": cp.nombre,
+        "hora": timezone.localtime(ts_evento).strftime("%H:%M:%S"),
+        "distancia_metros": None,
+        "dentro_geocerca": None,
+    }
+
+    # Progreso del guardia en el TURNO del evento (cuenta puntos ÚNICOS). Se filtra
+    # por timestamp_evento (hora real), no por timestamp_servidor (reenvío).
+    if ronda is not None:
+        ventana_turno = _ventana_turno(ronda, ts_evento)
+        if ventana_turno is not None:
+            estado = _estado_ejecucion(
+                ronda.id, guardia_keycloak_id, ventana_turno, campo_tiempo="timestamp_evento"
+            )
+            resp["pertenece"] = cp.id in estado["punto_ids"]
+            resp["progreso"] = {
+                "escaneados": estado["escaneados"],
+                "total": estado["total"],
+                "puntos": estado["puntos"],
+            }
+            resp["completada"] = estado["total"] > 0 and estado["escaneados"] >= estado["total"]
+    return resp
