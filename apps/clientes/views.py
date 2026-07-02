@@ -3,16 +3,37 @@ Vistas de clientes (nivel 1 del contexto). Se lista, se selecciona por fila
 (guardando en sesion) y se cambia. Datos desde el repositorio del espejo.
 """
 from django.contrib.auth.decorators import login_required
+from django.core.paginator import Paginator
 from django.shortcuts import redirect, render
 
 from apps.espejo import repositorio
 
+POR_PAGINA = 15
+
 
 @login_required
 def index(request):
-    """Tabla de clientes para seleccionar por fila."""
+    """Tabla de clientes (paginada de a 15) con buscador por razon social.
+
+    El filtro va en el BACKEND (icontains sobre razon_social del queryset del
+    espejo); el paginador se recalcula sobre el resultado filtrado. El termino `q`
+    se conserva entre paginas (query_sin_page). La seleccion por fila no cambia.
+    """
+    q = (request.GET.get("q") or "").strip()
     clientes = repositorio.listar_clientes()
-    return render(request, "clientes/index.html", {"clientes": clientes})
+    if q:
+        clientes = clientes.filter(razon_social__icontains=q)
+
+    page_obj = Paginator(clientes, POR_PAGINA).get_page(request.GET.get("page"))
+    # Querystring del filtro SIN 'page' (encodeado), para los enlaces del paginador.
+    params = request.GET.copy()
+    params.pop("page", None)
+    query_sin_page = params.urlencode()
+    return render(request, "clientes/index.html", {
+        "page_obj": page_obj,
+        "q": q,
+        "query_sin_page": query_sin_page,
+    })
 
 
 @login_required

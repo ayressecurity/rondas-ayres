@@ -13,6 +13,19 @@
     </div>
 {% endif %}
 
+{# Buscador por nombre / razón social (GET, filtro en el backend por icontains). #}
+<form method="get" class="filtros-informe">
+    <div class="filtro-campo">
+        <label for="f-q">Buscar</label>
+        <input type="search" id="f-q" name="q" value="{{ q }}"
+               placeholder="Nombre o razón social" autocomplete="off">
+    </div>
+    <div class="filtro-acciones">
+        <button type="submit" class="btn btn-primario">Buscar</button>
+        {% if q %}<a href="{% url 'clientes:index' %}" class="btn btn-secundario">Limpiar</a>{% endif %}
+    </div>
+</form>
+
 <div class="tabla-scroll">
     <table class="tabla-objetivos">
         <thead>
@@ -25,7 +38,7 @@
             </tr>
         </thead>
         <tbody>
-            {% for cli in clientes %}
+            {% for cli in page_obj %}
                 <tr class="fila-objetivo{% if cliente_id == cli.id %} fila-activa{% else %} fila-seleccionable{% endif %}"
                     {% if cliente_id != cli.id %}data-form="sel-cli-{{ cli.id }}" tabindex="0" role="button" aria-label="Seleccionar {{ cli.razon_social }}"{% endif %}>
                     <td data-col="Nombre">{{ cli.razon_social }}</td>
@@ -37,17 +50,21 @@
                     <td data-col="RUT">{{ cli.rut }}</td>
                 </tr>
             {% empty %}
-                <tr><td colspan="5">No hay clientes disponibles.</td></tr>
+                <tr><td colspan="5">
+                    {% if q %}No hay clientes que coincidan con «{{ q }}».{% else %}No hay clientes disponibles.{% endif %}
+                </td></tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
 
+{% include "informes/_paginador.html" %}
+
 {% comment %}
 Formularios de selección, fuera de la tabla. El clic en la fila los dispara
 por id vía dashboard.js.
 {% endcomment %}
-{% for cli in clientes %}
+{% for cli in page_obj %}
     {% if cliente_id != cli.id %}
         <form id="sel-cli-{{ cli.id }}" method="post" action="{% url 'clientes:seleccionar' cli.id %}" hidden>
             {% csrf_token %}
