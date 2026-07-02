@@ -99,11 +99,10 @@ DATABASES["default"]["OPTIONS"] = {"charset": "utf8mb4"}
 DATABASES["ayres"] = env.db("AYRES_DATABASE_URL")
 DATABASES["ayres"]["OPTIONS"] = {"charset": "utf8mb4"}
 
-# Comunas (lista separada por comas). DEPRECADO: el sync ya no filtra por comuna.
-SYNC_COMUNAS = env.list("SYNC_COMUNAS", default=["las condes"])
-# Razon social de los clientes a sincronizar (lista separada por comas).
-# El sync trae esos clientes y TODAS sus instalaciones. Hoy: Municipalidad de Las Condes.
-SYNC_CLIENTES_RAZON = env.list("SYNC_CLIENTES_RAZON", default=["municipalidad de las condes"])
+# Filtro OPCIONAL del sync por razon_social (lista separada por comas).
+#   - VACÍO (default) -> se sincronizan TODOS los clientes y TODAS sus instalaciones.
+#   - Con valores      -> solo esos clientes (match tolerante a tildes/orden) y los suyos.
+SYNC_CLIENTES_RAZON = env.list("SYNC_CLIENTES_RAZON", default=[])
 
 # Modelo de usuario propio (debe estar ANTES de la primera migracion)
 AUTH_USER_MODEL = "cuentas.Usuario"

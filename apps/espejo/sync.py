@@ -8,8 +8,9 @@ las columnas coinciden con nuestro esquema EXCEPTO:
   - Ayres trae `user_id`  -> lo IGNORAMOS.
   - Ayres NO trae `codigo` -> el AYR-00XX es propio de Rondas (se asigna aqui).
 
-Solo se sincronizan instalaciones de las comunas de SYNC_COMUNAS (hoy: Las Condes)
-y los clientes duenos de esas instalaciones.
+Filtro OPCIONAL por razon_social (SYNC_CLIENTES_RAZON): si trae valores, se
+sincronizan solo esos clientes y sus instalaciones; si esta VACIO (default), se
+sincronizan TODOS los clientes y TODAS sus instalaciones.
 """
 import json
 import re
@@ -44,7 +45,7 @@ INSTALACION_FIELDS = [
 ]
 
 
-# ---------- helpers de texto / comuna ----------
+# ---------- helpers de texto (match de razon_social) ----------
 def _norm(valor):
     """minusculas, sin tildes, espacios colapsados."""
     if not valor:
@@ -104,10 +105,13 @@ def _max_correlativo():
 
 # ---------- lectura desde Ayres (solo SELECT) ----------
 def _leer_ayres(terminos):
-    """Devuelve (instalaciones, clientes) de Ayres para las razones sociales pedidas.
+    """Devuelve (instalaciones, clientes) de Ayres.
 
-    Filtra CLIENTES por razon_social y trae TODAS sus instalaciones (sin filtrar
-    por comuna).
+    Filtro OPCIONAL por razon_social:
+      - `terminos` con valores -> trae SOLO los clientes que matcheen (match
+        tolerante a tildes/orden) y SUS instalaciones (WHERE cliente_id IN ...).
+      - `terminos` VACÍO -> trae TODOS los clientes y TODAS las instalaciones
+        (SELECT directo, sin IN gigante).
     """
     if "ayres" not in connections.databases:
         raise RuntimeError(
@@ -115,20 +119,29 @@ def _leer_ayres(terminos):
             "servidor (develop/prod) con AYRES_DATABASE_URL definida."
         )
 
-    where, params = _prefiltro("razon_social", terminos)
+    where, params = _prefiltro("razon_social", terminos)  # "" y [] si no hay terminos
     try:
         with connections["ayres"].cursor() as cur:
             cur.execute(f"SELECT * FROM clientes {where}", params)
             clientes = _filas(cur)
 
-            # Refinar en Python (match tolerante) y sacar los id de cliente.
-            clientes = [c for c in clientes if _coincide(c.get("razon_social"), terminos)]
-            cliente_ids = sorted({c["id"] for c in clientes if c.get("id")})
-
-            instalaciones = []
-            if cliente_ids:
-                marcas = ", ".join(["%s"] * len(cliente_ids))
-                cur.execute(f"SELECT * FROM instalaciones WHERE cliente_id IN ({marcas})", cliente_ids)
+            if terminos:
+                # Refine en Python (match tolerante) SOLO cuando hay términos. Sin
+                # este guard, `_coincide(texto, [])` sería False para todos y se
+                # sincronizarían 0 clientes.
+                clientes = [c for c in clientes if _coincide(c.get("razon_social"), terminos)]
+                cliente_ids = sorted({c["id"] for c in clientes if c.get("id")})
+                instalaciones = []
+                if cliente_ids:
+                    marcas = ", ".join(["%s"] * len(cliente_ids))
+                    cur.execute(
+                        f"SELECT * FROM instalaciones WHERE cliente_id IN ({marcas})", cliente_ids
+                    )
+                    instalaciones = _filas(cur)
+            else:
+                # Sin filtro: TODOS los clientes ya vienen del SELECT de arriba y
+                # TODAS las instalaciones en un SELECT directo (evita un IN enorme).
+                cur.execute("SELECT * FROM instalaciones")
                 instalaciones = _filas(cur)
     except RuntimeError:
         raise
@@ -142,7 +155,10 @@ def _leer_ayres(terminos):
 def sincronizar(dry_run=False, escribir=print):
     """Lee Ayres y hace upsert del espejo. Devuelve un dict resumen."""
     terminos = settings.SYNC_CLIENTES_RAZON
-    escribir(f"Clientes a sincronizar (razon_social): {terminos}")
+    if terminos:
+        escribir(f"Clientes a sincronizar (razon_social): {terminos}")
+    else:
+        escribir("Sin filtro de razon_social: se sincronizan TODOS los clientes.")
 
     instalaciones, clientes = _leer_ayres(terminos)
     escribir(f"Ayres devolvio {len(clientes)} cliente(s) y {len(instalaciones)} instalacion(es).")

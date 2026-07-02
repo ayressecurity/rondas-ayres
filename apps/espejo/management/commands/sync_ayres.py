@@ -11,7 +11,10 @@ from apps.espejo import sync
 
 
 class Command(BaseCommand):
-    help = "Sincroniza el espejo de Ayres360 (cliente, instalacion) por comuna."
+    help = (
+        "Sincroniza el espejo de Ayres360 (cliente, instalacion). Filtro OPCIONAL "
+        "por razon_social (SYNC_CLIENTES_RAZON); vacio = todos los clientes."
+    )
 
     def add_arguments(self, parser):
         parser.add_argument(
