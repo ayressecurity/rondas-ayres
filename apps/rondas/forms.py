@@ -22,13 +22,14 @@ class RondaForm(forms.ModelForm):
         (MODO_ALEATORIO, "Ronda aleatoria"),
         (MODO_ESTIPULADA, "Ronda estipulada"),
     ]
-    # 'nombre' es varchar en BD; aquí lo limitamos a un tipo de ronda fijo.
+    # 'nombre' es varchar en BD; aquí lo limitamos al TURNO de la ronda. Se llama
+    # "Turno Día/Noche" (no "Ronda Día/Noche"): describe el turno, no repite "Ronda".
     NOMBRE_CHOICES = [
-        ("Ronda Día", "Ronda Día"),
-        ("Ronda Noche", "Ronda Noche"),
+        ("Turno Día", "Turno Día"),
+        ("Turno Noche", "Turno Noche"),
     ]
 
-    nombre = forms.ChoiceField(choices=NOMBRE_CHOICES, label="Nombre")
+    nombre = forms.ChoiceField(choices=NOMBRE_CHOICES, label="Turno")
     fecha_inicio = forms.DateField(
         label="Fecha de inicio",
         widget=forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),

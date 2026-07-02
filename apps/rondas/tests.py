@@ -22,7 +22,7 @@ class RondaFormAlarmasTests(TestCase):
 
     def _data(self, horas, minutos, hora_inicio="12:00", hora_fin="18:59"):
         d = QueryDict(mutable=True)
-        d["nombre"] = "Ronda Día"
+        d["nombre"] = "Turno Día"
         d["fecha_inicio"] = "2026-01-01"
         d["hora_inicio"] = hora_inicio
         d["hora_fin"] = hora_fin
