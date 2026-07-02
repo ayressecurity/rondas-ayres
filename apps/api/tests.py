@@ -1321,3 +1321,112 @@ class ResumenInstalacionApiTests(_JwtMixin, TestCase):
         # + 1 programaciones + 1 horarios = 7 (prefetch, sin N+1).
         with self.assertNumQueries(7):
             self._get_rol(self.URL_4, ["sspp"])
+
+
+class ConfigurarQrApiTests(_JwtMixin, TestCase):
+    """POST /api/qr/configurar — réplica del flujo web "Configurar QR" (SSPP).
+
+    Mismo service que la web (aplicar_configuracion_qr): mismas validaciones,
+    mismo UPDATE (solo lat/lng/validar_posicion/tolerancia_mts)."""
+    URL = "/api/qr/configurar"
+    QR = "55555555-5555-5555-5555-555555555555"
+
+    def setUp(self):
+        super().setUp()
+        self.cp = PuntoControl.objects.create(
+            instalacion_id=4, nombre="Porton Norte",
+            lat="-33.40000000000000000", lng="-70.56000000000000000",
+            tolerancia_mts=30, validar_posicion=True,
+            qr_token=self.QR, activo=True,
+        )
+
+    def _post_rol(self, body, roles):
+        """POST JSON con el token trayendo `roles` en realm_access.roles."""
+        claims = _claims(realm_access={"roles": roles})
+        return self.client.post(
+            self.URL, body, format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self._token(claims)}",
+        )
+
+    def _body(self, **over):
+        # Nota: precisión acotada a lo que SQLite (BD de test) conserva; en MySQL
+        # el decimal(20,17) guarda el valor completo. El service NO trunca.
+        d = {"qr_token": self.QR, "lat": "-33.412345", "lng": "-70.571234",
+             "tolerancia_mts": "45", "no_validar": "0"}
+        d.update(over)
+        return d
+
+    def test_sspp_configura_200_y_actualiza(self):
+        resp = self._post_rol(self._body(), ["sspp"])
+        self.assertEqual(resp.status_code, 200)
+        d = resp.json()
+        self.assertEqual(d["id"], self.cp.id)
+        self.assertEqual(d["nombre"], "Porton Norte")
+        self.assertEqual(d["instalacion_id"], 4)
+        self.assertEqual(d["tolerancia_mts"], 45)
+        self.assertTrue(d["validar_posicion"])
+        self.cp.refresh_from_db()
+        # Coordenadas del teléfono guardadas (Decimal, mismas que envió la app).
+        self.assertEqual(str(self.cp.lat), "-33.41234500000000000")
+        self.assertEqual(str(self.cp.lng), "-70.57123400000000000")
+        self.assertEqual(self.cp.tolerancia_mts, 45)
+        self.assertTrue(self.cp.validar_posicion)
+
+    def test_super_admin_200(self):
+        self.assertEqual(self._post_rol(self._body(), ["super_admin"]).status_code, 200)
+
+    def test_no_validar_desactiva_validacion(self):
+        resp = self._post_rol(self._body(no_validar="1"), ["sspp"])
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.json()["validar_posicion"])
+        self.cp.refresh_from_db()
+        self.assertFalse(self.cp.validar_posicion)
+
+    def test_no_cambia_qr_token_ni_nombre(self):
+        self._post_rol(self._body(), ["sspp"])
+        self.cp.refresh_from_db()
+        self.assertEqual(self.cp.qr_token, self.QR)      # jamás se regenera
+        self.assertEqual(self.cp.nombre, "Porton Norte")
+
+    def test_tolerancia_invalida_conserva_actual(self):
+        # Igual que la web: tolerancia no numérica -> conserva la actual (30).
+        resp = self._post_rol(self._body(tolerancia_mts="abc"), ["sspp"])
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["tolerancia_mts"], 30)
+
+    def test_rol_sin_permiso_403_no_actualiza(self):
+        resp = self._post_rol(self._body(), ["guardia"])
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["error"]["codigo"], "sin_permiso")
+        self.cp.refresh_from_db()
+        self.assertEqual(self.cp.tolerancia_mts, 30)     # sin cambios
+
+    def test_sin_token_401(self):
+        resp = self.client.post(self.URL, self._body(), format="json")
+        self.assertEqual(resp.status_code, 401)
+
+    def test_qr_inexistente_404(self):
+        resp = self._post_rol(self._body(qr_token="no-existe"), ["sspp"])
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.json()["error"]["codigo"], "no_encontrado")
+
+    def test_qr_inactivo_404(self):
+        self.cp.activo = False
+        self.cp.save(update_fields=["activo"])
+        self.assertEqual(self._post_rol(self._body(), ["sspp"]).status_code, 404)
+
+    def test_sin_gps_400(self):
+        # lat/lng son OBLIGATORIOS (misma validación y mensaje que la web).
+        resp = self._post_rol(self._body(lat="", lng=""), ["sspp"])
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("Falta la ubicación", resp.json()["error"]["mensaje"])
+
+    def test_lat_fuera_de_rango_400(self):
+        resp = self._post_rol(self._body(lat="200"), ["sspp"])
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("Latitud fuera de rango", resp.json()["error"]["mensaje"])
+
+    def test_lng_fuera_de_rango_400(self):
+        resp = self._post_rol(self._body(lng="-200"), ["sspp"])
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("Longitud fuera de rango", resp.json()["error"]["mensaje"])

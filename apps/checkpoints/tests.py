@@ -92,3 +92,55 @@ class ConfigurarQrSinInstalacionTests(TestCase):
         )
         self.assertEqual(resp.status_code, 400)
         self.assertIn("Selecciona una instalación", resp.json()["error"])
+
+
+@patch("apps.checkpoints.views.permisos.es_super_admin", return_value=True)
+class ConfigurarQrGuardarWebTests(TestCase):
+    """La web de "Configurar QR" NO cambió tras extraer la lógica al service
+    compartido: mismos requests, mismas respuestas ({"ok"/"error"}, 200/400/404)."""
+
+    QR = "77777777-7777-7777-7777-777777777777"
+    URL = "/checkpoints/configurar-qr/guardar/"
+
+    def setUp(self):
+        self.user = get_user_model().objects.create(username="sa")
+        self.client = Client()
+        self.client.force_login(self.user)
+        s = self.client.session
+        s["cliente_id"] = 1
+        s["instalacion_id"] = 10
+        s.save()
+        self.cp = PuntoControl.objects.create(
+            instalacion_id=10, nombre="Porton Web",
+            lat="-33.4", lng="-70.5", tolerancia_mts=30, validar_posicion=True,
+            qr_token=self.QR, activo=True,
+        )
+
+    def test_guardar_ok_misma_respuesta(self, _m):
+        resp = self.client.post(self.URL, {
+            "qr_token": self.QR, "lat": "-33.41", "lng": "-70.57",
+            "tolerancia_mts": "50", "no_validar": "0",
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {"ok": True, "nombre": "Porton Web"})  # respuesta intacta
+        self.cp.refresh_from_db()
+        self.assertEqual(str(self.cp.lat), "-33.41000000000000000")
+        self.assertEqual(self.cp.tolerancia_mts, 50)
+        self.assertTrue(self.cp.validar_posicion)
+
+    def test_guardar_sin_gps_400_mismo_mensaje(self, _m):
+        resp = self.client.post(self.URL, {"qr_token": self.QR})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("Falta la ubicación", resp.json()["error"])
+
+    def test_guardar_lat_fuera_de_rango_400(self, _m):
+        resp = self.client.post(self.URL, {"qr_token": self.QR, "lat": "200", "lng": "-70.5"})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("Latitud fuera de rango", resp.json()["error"])
+
+    def test_guardar_qr_de_otra_instalacion_404(self, _m):
+        resp = self.client.post(self.URL, {
+            "qr_token": "no-es-de-aqui", "lat": "-33.4", "lng": "-70.5",
+        })
+        self.assertEqual(resp.status_code, 404)
+        self.assertIn("no pertenece a esta instalación", resp.json()["error"])

@@ -49,6 +49,7 @@ from apps.api.serializers import (
     RondaSerializer,
 )
 from apps.checkpoints.models import PuntoControl
+from apps.checkpoints.services import ConfigQrInvalida, aplicar_configuracion_qr
 from apps.comun.services.rondas import (
     SinRondaActiva,
     iniciar_o_reusar_ejecucion,
@@ -881,4 +882,61 @@ def resumen_instalacion(request, instalacion_id):
         "cliente": cliente,
         "checkpoints_total": checkpoints_total,
         "rondas": rondas_data,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Configurar QR desde la app (vista SSPP): réplica del flujo web "Configurar QR"
+# (checkpoints/configurar_qr_guardar). El SSPP escanea el QR de un punto y graba
+# la ubicación real del teléfono + tolerancia. Mismo service compartido que la web.
+# ---------------------------------------------------------------------------
+@api_view(["POST"])
+@authentication_classes([KeycloakJWTAuthentication])
+def configurar_qr(request):
+    """POST /api/qr/configurar — configura un punto de control por escaneo.
+
+    Solo rol sspp / super_admin (roles del token). Body (JSON o form), mismos
+    nombres que la web: `qr_token` (contenido del QR), `lat` y `lng`
+    (OBLIGATORIOS: la ubicación real del teléfono), `tolerancia_mts` (entera >= 0;
+    inválida/ausente conserva la actual) y `no_validar` ("1"/true = no validar
+    posición en los arribos).
+
+    La instalación NO viaja en el body: el punto se resuelve por su qr_token
+    (activo). Valida y actualiza con el MISMO service que la web
+    (aplicar_configuracion_qr): mismas reglas, mismos mensajes, mismo UPDATE
+    (solo lat, lng, validar_posicion, tolerancia_mts; jamás qr_token/nombre/tipo).
+    """
+    roles = getattr(request, "token_roles", []) or []
+    if "super_admin" not in roles and "sspp" not in roles:
+        raise sin_permiso()
+
+    qr_token = str(request.data.get("qr_token") or "").strip()
+    cp = PuntoControl.objects.filter(qr_token=qr_token, activo=True).first() if qr_token else None
+    if cp is None:
+        raise no_encontrado(
+            "El código QR no corresponde a ningún punto de control.", "qr_no_encontrado"
+        )
+
+    try:
+        aplicar_configuracion_qr(
+            cp,
+            lat=request.data.get("lat"),
+            lng=request.data.get("lng"),
+            tolerancia_mts=request.data.get("tolerancia_mts"),
+            no_validar=request.data.get("no_validar"),
+        )
+    except ConfigQrInvalida as exc:
+        raise solicitud_invalida(exc.mensaje, exc.codigo)
+
+    log.info("qr_configurado punto=%s sub=%s", cp.id, request.sub_con_guiones)
+    # Punto ya actualizado, para que la app confirme lo guardado. lat/lng como
+    # float, igual que GET /api/checkpoints/by-qr (PuntoControlByQrSerializer).
+    return Response({
+        "id": cp.id,
+        "nombre": cp.nombre,
+        "instalacion_id": cp.instalacion_id,
+        "lat": float(cp.lat),
+        "lng": float(cp.lng),
+        "tolerancia_mts": cp.tolerancia_mts,
+        "validar_posicion": cp.validar_posicion,
     })

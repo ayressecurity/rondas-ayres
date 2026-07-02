@@ -8,7 +8,6 @@ control pertenezca a la instalacion de la sesion (si no, 404). instalacion_id y
 qr_token NUNCA vienen del formulario: los fija la vista.
 """
 import base64
-from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from uuid import uuid4
 
@@ -25,6 +24,7 @@ from apps.comun.decoradores import requiere_instalacion, solo_super_admin
 from apps.cuentas import permisos
 from .forms import PuntoControlForm
 from .models import PuntoControl, TIPO_QR
+from .services import ConfigQrInvalida, aplicar_configuracion_qr
 
 
 def _checkpoint_de_la_instalacion(request, pk):
@@ -152,16 +152,6 @@ def imprimir(request):
     return render(request, "checkpoints/imprimir.html", {"paginas": paginas})
 
 
-def _coord(valor):
-    """Convierte el string del POST a Decimal SIN truncar; None si no es válido."""
-    if valor is None or str(valor).strip() == "":
-        return None
-    try:
-        return Decimal(str(valor).strip())
-    except (InvalidOperation, ValueError):
-        return None
-
-
 def _punto_por_qr(qr_token, instalacion_id):
     """PuntoControl activo del qr_token que pertenezca a esa instalación."""
     if not qr_token or not instalacion_id:
@@ -222,34 +212,18 @@ def configurar_qr_guardar(request):
             {"ok": False, "error": "Este QR no pertenece a esta instalación."}, status=404
         )
 
-    lat = _coord(request.POST.get("lat"))
-    lng = _coord(request.POST.get("lng"))
-    if lat is None or lng is None:
-        return JsonResponse(
-            {"ok": False, "error": "Falta la ubicación: debes permitir el GPS para configurar."},
-            status=400,
-        )
-    # Rango geográfico válido (evita coordenadas imposibles del GPS).
-    if not (-90 <= lat <= 90):
-        return JsonResponse({"ok": False, "error": "Latitud fuera de rango (-90 a 90)."}, status=400)
-    if not (-180 <= lng <= 180):
-        return JsonResponse({"ok": False, "error": "Longitud fuera de rango (-180 a 180)."}, status=400)
-
-    # Tolerancia entera >= 0; si no viene válida, conserva la actual.
+    # Validación + UPDATE en el service compartido (misma lógica que la API móvil).
+    # Mismos mensajes y mismos 400 que respondía esta vista inline.
     try:
-        tolerancia = int(request.POST.get("tolerancia_mts"))
-        if tolerancia < 0:
-            raise ValueError
-    except (TypeError, ValueError):
-        tolerancia = cp.tolerancia_mts
-
-    no_validar = request.POST.get("no_validar") in ("1", "true", "on", "True")
-
-    cp.lat = lat                      # coordenadas reales del teléfono, sin truncar
-    cp.lng = lng
-    cp.validar_posicion = not no_validar
-    cp.tolerancia_mts = tolerancia
-    cp.save(update_fields=["lat", "lng", "validar_posicion", "tolerancia_mts"])
+        aplicar_configuracion_qr(
+            cp,
+            lat=request.POST.get("lat"),
+            lng=request.POST.get("lng"),
+            tolerancia_mts=request.POST.get("tolerancia_mts"),
+            no_validar=request.POST.get("no_validar"),
+        )
+    except ConfigQrInvalida as exc:
+        return JsonResponse({"ok": False, "error": exc.mensaje}, status=400)
 
     return JsonResponse({"ok": True, "nombre": cp.nombre})
 

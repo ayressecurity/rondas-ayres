@@ -30,4 +30,6 @@ urlpatterns = [
     path("instalaciones", views.listar_instalaciones, name="listar_instalaciones"),
     # GET /api/instalaciones/<id>/resumen — resumen SSPP (cliente, rondas, checkpoints).
     path("instalaciones/<int:instalacion_id>/resumen", views.resumen_instalacion, name="resumen_instalacion"),
+    # POST /api/qr/configurar — configura un punto por escaneo (réplica web, SSPP).
+    path("qr/configurar", views.configurar_qr, name="configurar_qr"),
 ]
