@@ -7,7 +7,9 @@ from uuid import UUID
 
 import jwt
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.test import Client, TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
@@ -120,6 +122,38 @@ class TiempoRealTests(TestCase):
         # Sin instalacion_id en sesión, el endpoint responde normal (página global).
         self._evento(self.t_novedad)
         self.assertEqual(self.client.get(reverse("tiempo_real:data")).status_code, 200)
+
+    # ---- FIX fotos en refresco: el JSON de data trae 'fotos' por fila ----
+    def test_data_fotos_por_fila_con_y_sin_imagen(self):
+        # El JS (filaHTML) decide la columna Media por ev.fotos: el JSON debe traerlo
+        # (lista de URLs si hay imagen; [] si no) — igual que el render inicial.
+        con = self._evento(self.t_novedad)
+        LibroNovedadesMedia.objects.create(
+            libro_novedades=con, tipo=TipoMedia.FOTO, path="novedades/con.jpg",
+        )
+        sin = self._evento(self.t_novedad)  # novedad SIN foto
+        filas = {f["id"]: f for f in self.client.get(reverse("tiempo_real:data")).json()["eventos"]}
+        self.assertEqual(len(filas[con.id]["fotos"]), 1)
+        self.assertIn("con.jpg", filas[con.id]["fotos"][0])
+        self.assertEqual(filas[sin.id]["fotos"], [])
+
+    def test_data_fotos_sin_n_mas_uno(self):
+        # Las fotos de TODA la página se resuelven en 1 query (_adjuntar_fotos):
+        # más eventos con foto NO deben aumentar el nº de queries del endpoint.
+        e1 = self._evento(self.t_novedad)
+        LibroNovedadesMedia.objects.create(libro_novedades=e1, tipo=TipoMedia.FOTO, path="n/1.jpg")
+        with CaptureQueriesContext(connection) as ctx1:
+            self.client.get(reverse("tiempo_real:data"))
+        base = len(ctx1.captured_queries)
+
+        for i in range(4):  # 4 eventos más, cada uno con su foto
+            e = self._evento(self.t_novedad)
+            LibroNovedadesMedia.objects.create(libro_novedades=e, tipo=TipoMedia.FOTO, path=f"n/{i}.jpg")
+        with CaptureQueriesContext(connection) as ctx2:
+            self.client.get(reverse("tiempo_real:data"))
+
+        # Constante: sin N+1 (ni por evento ni por foto).
+        self.assertEqual(len(ctx2.captured_queries), base)
 
     # ---- 3.2: rol cenapoc (ver la tabla) ----
     def test_index_cenapoc_200(self):

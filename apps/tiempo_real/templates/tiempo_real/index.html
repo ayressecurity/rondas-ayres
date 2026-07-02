@@ -246,17 +246,29 @@
             + '</tr>';
     }
 
-    // Firma = ids en orden. Si no cambió, NO repintamos (evita parpadeo constante).
+    // Firma = por fila, "id:tieneFoto". Incluye el estado de FOTO (no solo el id)
+    // para que, si a un evento YA listado le llegan imágenes después (p.ej. la marca
+    // sube el evento y luego adjunta la media por separado), la firma cambie y la
+    // fila se REPINTE mostrando "Ver fotos" — sin esperar un F5. Si nada relevante
+    // cambió, la firma es igual y NO repintamos (se mantiene el "sin parpadeo").
     function firmaDe(tr_list) {
-        return Array.prototype.map.call(tr_list, function (tr) { return tr.getAttribute("data-id"); }).join(",");
+        return Array.prototype.map.call(tr_list, function (tr) {
+            // En el render inicial (server-side) una fila con fotos trae el botón .btn-fotos.
+            return tr.getAttribute("data-id") + ":" + (tr.querySelector(".btn-fotos") ? "1" : "0");
+        }).join(",");
+    }
+    function firmaEventos(eventos) {
+        return eventos.map(function (e) {
+            return e.id + ":" + ((e.fotos && e.fotos.length) ? "1" : "0");
+        }).join(",");
     }
     var vistos = new Set(Array.prototype.map.call(
         tbody.querySelectorAll("tr[data-id]"), function (tr) { return tr.getAttribute("data-id"); }));
     var firma = firmaDe(tbody.querySelectorAll("tr[data-id]"));
 
     function render(eventos) {
-        var nueva = eventos.map(function (e) { return e.id; }).join(",");
-        if (nueva === firma) { return; }   // sin cambios: no tocar el DOM
+        var nueva = firmaEventos(eventos);
+        if (nueva === firma) { return; }   // sin cambios (id + fotos): no tocar el DOM
         firma = nueva;
         tbody.innerHTML = eventos.map(filaHTML).join("");
         // Destello solo en filas cuyo id no habíamos visto antes.
